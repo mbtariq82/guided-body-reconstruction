@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Camera Diagnostic</title>
+    <style>
+      body {
+        margin: 0;
+        background: #111312;
+        color: #fff;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        min-height: 100svh;
+        display: grid;
+        gap: 18px;
+        align-content: center;
+        padding: 24px;
+      }
+
+      video {
+        width: 100%;
+        max-height: 58svh;
+        background: #050607;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+      }
+
+      button,
+      a {
+        min-height: 56px;
+        border-radius: 999px;
+        border: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 22px;
+        font: inherit;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      button {
+        background: #fff;
+        color: #111312;
+      }
+
+      a {
+        color: #fff;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+      }
+
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        padding: 14px;
+        color: rgba(255, 255, 255, 0.78);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Camera Diagnostic</h1>
+      <p>Use this page to test browser camera access without React or the scanner UI.</p>
+      <button id="start-camera" type="button">Start Camera</button>
+      <button id="copy-diagnostics" type="button">Copy Diagnostics</button>
+      <video id="preview" autoplay muted playsinline></video>
+      <pre id="status">Waiting for tap...</pre>
+      <a href="/?step=camera-permission">Back to scanner</a>
+    </main>
+    <script>
+      const statusEl = document.getElementById("status");
+      const videoEl = document.getElementById("preview");
+      const buttonEl = document.getElementById("start-camera");
+      const copyButtonEl = document.getElementById("copy-diagnostics");
+
+      function writeStatus(lines) {
+        statusEl.textContent = lines.join("\n");
+      }
+
+      function diagnostics() {
+        return [
+          `URL: ${location.href}`,
+          `Origin: ${location.origin}`,
+          `Secure context: ${window.isSecureContext}`,
+          `Protocol: ${location.protocol}`,
+          `Top-level page: ${window.top === window.self}`,
+          `Referrer: ${document.referrer || "(none)"}`,
+          `mediaDevices: ${Boolean(navigator.mediaDevices)}`,
+          `getUserMedia: ${typeof navigator.mediaDevices?.getUserMedia === "function"}`,
+          `User agent: ${navigator.userAgent}`,
+        ];
+      }
+
+      writeStatus(diagnostics());
+
+      copyButtonEl.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(statusEl.textContent);
+          copyButtonEl.textContent = "Copied";
+        } catch {
+          copyButtonEl.textContent = "Copy failed";
+        }
+      });
+
+      buttonEl.addEventListener("click", async () => {
+        writeStatus(["Tap received. Requesting camera...", ...diagnostics()]);
+
+        try {
+          if (typeof navigator.mediaDevices?.getUserMedia !== "function") {
+            throw new Error("getUserMedia is unavailable in this browser.");
+          }
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+
+          videoEl.srcObject = stream;
+          writeStatus([
+            "Camera connected.",
+            `Tracks: ${stream.getVideoTracks().map((track) => track.label || track.kind).join(", ")}`,
+            ...diagnostics(),
+          ]);
+        } catch (error) {
+          writeStatus([
+            "Camera request failed.",
+            `Name: ${error && error.name ? error.name : "Error"}`,
+            `Message: ${error && error.message ? error.message : String(error)}`,
+            ...diagnostics(),
+          ]);
+        }
+      });
+    </script>
+  </body>
+</html>
