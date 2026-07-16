@@ -22,7 +22,7 @@ The target output is not merely a plausible avatar. It is a traceable human mode
 The first working milestone includes:
 
 - A guided fixed-camera smartphone capture flow.
-- Front and back holds, both side profiles, four slow quarter-turn sweeps, controlled arm motion, and a separate face/hands detail pass.
+- Front and back holds, both side profiles, four slow quarter-turn sweeps, T/Y/wide-stance visibility poses, controlled arm motion, and separate face and hand detail passes.
 - Continuous MP4/WebM recording with phase timestamps.
 - Quality-gated JPEG reference frames selected from the temporal sequence.
 - MoveNet landmarks and locally hosted MediaPipe person segmentation.
@@ -30,7 +30,7 @@ The first working milestone includes:
 - Height-calibrated local measurements.
 - Local session validation, processing, storage, and diagnostics.
 - A bundled self-hosted SMPL-X worker.
-- Direct SMPL-X beta optimisation against calibrated measurements and guided multi-view silhouette profiles.
+- Direct SMPL-X beta optimisation against calibrated measurements and yaw-balanced silhouette profiles from every approved neutral-turn frame.
 - Smooth-normal GLB export with SMPL-X parameters and fitting diagnostics.
 - A reconstruction workbench with surface, silhouette, and topology inspection modes.
 - Optional ECON, LHM, and LHM++ adapter discovery for future checkpoint-backed reconstruction.
@@ -47,10 +47,16 @@ The phone remains fixed while the subject moves. Geometry phases keep the full b
 6. Back-to-right sweep.
 7. Right profile hold.
 8. Right-to-front sweep.
-9. Controlled arm raise for joint tracking.
-10. Closer face and open-hands identity pass.
+9. Static T-pose for shoulder, arm, and armpit visibility.
+10. Static overhead Y-pose for shoulder articulation and torso-side visibility.
+11. Static wide stance for inner-leg and lower-body visibility.
+12. Controlled arm raise for temporal joint tracking.
+13. Close face pass with small head turns.
+14. Close open-palm hand pass.
 
 Each geometry frame records its capture role and estimated yaw. The worker receives eight angle-balanced references, the complete approved frame sequence, temporal video metadata, masks, landmarks, measurements, and camera metadata.
+
+The evidence and planned ablations behind this sequence are documented in [`docs/capture-protocol-research.md`](docs/capture-protocol-research.md).
 
 ## Run Locally
 

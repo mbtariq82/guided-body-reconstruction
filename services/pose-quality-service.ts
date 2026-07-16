@@ -83,8 +83,10 @@ export function buildPoseQualityResult({
   const bounds = getVisibleBounds(visibleKeypoints);
   const bodyMetric = getBodyVisibilityMetric(namedKeypoints, scanState);
   const distanceMetric = bounds
-    ? scanState === "identity-detail"
+    ? scanState === "identity-detail" || scanState === "hand-detail"
       ? getIdentityDetailDistanceMetric(bounds.height / height)
+      : scanState === "overhead-reach"
+        ? getArticulatedDistanceMetric(bounds.height / height)
       : getDistanceMetric(bounds.height / height)
     : { label: "Distance", value: "Unknown", tone: "neutral" as const };
   const centeringMetric = bounds
@@ -210,12 +212,19 @@ function getBodyVisibilityMetric(
     const hasFace =
       isVisibleKeypoint(keypoints.nose) &&
       (isVisibleKeypoint(keypoints.left_eye) || isVisibleKeypoint(keypoints.right_eye));
+
+    return hasFace && hasShoulders
+      ? { label: "Detail", value: "Face Clear", tone: "good" }
+      : { label: "Detail", value: "Show Full Face", tone: "warning" };
+  }
+
+  if (scanState === "hand-detail") {
     const hasWrists =
       isVisibleKeypoint(keypoints.left_wrist) && isVisibleKeypoint(keypoints.right_wrist);
 
-    return hasFace && hasShoulders && hasWrists
-      ? { label: "Detail", value: "Face + Hands", tone: "good" }
-      : { label: "Detail", value: "Show Face + Hands", tone: "warning" };
+    return hasWrists && (hasHead || hasShoulders)
+      ? { label: "Detail", value: "Both Hands", tone: "good" }
+      : { label: "Detail", value: "Show Both Hands", tone: "warning" };
   }
 
   if (hasHead && hasShoulders && hasHips && hasKnees && hasAnkles) {
@@ -234,11 +243,23 @@ function getBodyVisibilityMetric(
 }
 
 function getDistanceMetric(bodyHeightRatio: number): ScanMetric {
-  if (bodyHeightRatio > 0.9) {
+  if (bodyHeightRatio > 0.86) {
     return { label: "Distance", value: "Too Close", tone: "warning" };
   }
 
-  if (bodyHeightRatio < 0.43) {
+  if (bodyHeightRatio < 0.48) {
+    return { label: "Distance", value: "Too Far", tone: "warning" };
+  }
+
+  return { label: "Distance", value: "Ideal", tone: "good" };
+}
+
+function getArticulatedDistanceMetric(bodyHeightRatio: number): ScanMetric {
+  if (bodyHeightRatio > 0.93) {
+    return { label: "Distance", value: "Too Close", tone: "warning" };
+  }
+
+  if (bodyHeightRatio < 0.48) {
     return { label: "Distance", value: "Too Far", tone: "warning" };
   }
 
@@ -258,7 +279,7 @@ function getIdentityDetailDistanceMetric(visibleHeightRatio: number): ScanMetric
 }
 
 function getCenteringMetric(centerXRatio: number): ScanMetric {
-  if (centerXRatio < 0.36 || centerXRatio > 0.64) {
+  if (centerXRatio < 0.38 || centerXRatio > 0.62) {
     return { label: "Centering", value: "Off Center", tone: "warning" };
   }
 
@@ -283,9 +304,11 @@ function getPoseMetric(
   }
 
   if (scanState === "front-view" || scanState === "back-view") {
-    return orientation === "side"
-      ? { label: "Pose", value: "Too Side-On", tone: "warning" }
-      : { label: "Pose", value: "Aligned", tone: "good" };
+    if (orientation === "side") {
+      return { label: "Pose", value: "Too Side-On", tone: "warning" };
+    }
+
+    return getNeutralAPoseMetric(keypoints);
   }
 
   if (
@@ -297,7 +320,152 @@ function getPoseMetric(
     return { label: "Rotation", value: "Tracked", tone: "good" };
   }
 
+  if (scanState === "arm-span") {
+    return getArmSpanMetric(keypoints);
+  }
+
+  if (scanState === "overhead-reach") {
+    return getOverheadReachMetric(keypoints);
+  }
+
+  if (scanState === "wide-stance") {
+    return getWideStanceMetric(keypoints);
+  }
+
   return { label: "Pose", value: "Tracked", tone: "good" };
+}
+
+function getNeutralAPoseMetric(keypoints: NamedKeypoints): ScanMetric {
+  const geometry = getTorsoGeometry(keypoints);
+  const leftWrist = keypoints.left_wrist;
+  const rightWrist = keypoints.right_wrist;
+
+  if (!geometry || !isVisibleKeypoint(leftWrist) || !isVisibleKeypoint(rightWrist)) {
+    return { label: "Pose", value: "Show Both Arms", tone: "warning" };
+  }
+
+  const wristSpan = Math.abs(leftWrist.x - rightWrist.x);
+  const averageWristY = (leftWrist.y + rightWrist.y) / 2;
+  const armsBelowShoulders = averageWristY > geometry.shoulderY + geometry.torsoHeight * 0.38;
+  const armsNearTorso = averageWristY < geometry.hipY + geometry.torsoHeight * 0.7;
+  const armsSeparated = wristSpan > Math.max(geometry.hipSpan * 1.12, geometry.shoulderSpan * 0.92);
+
+  return armsBelowShoulders && armsNearTorso && armsSeparated
+    ? { label: "Pose", value: "Neutral A-Pose", tone: "good" }
+    : { label: "Pose", value: "Relax Into A", tone: "warning" };
+}
+
+function getArmSpanMetric(keypoints: NamedKeypoints): ScanMetric {
+  const geometry = getTorsoGeometry(keypoints);
+  const leftElbow = keypoints.left_elbow;
+  const rightElbow = keypoints.right_elbow;
+  const leftWrist = keypoints.left_wrist;
+  const rightWrist = keypoints.right_wrist;
+
+  if (
+    !geometry ||
+    !isVisibleKeypoint(leftElbow) ||
+    !isVisibleKeypoint(rightElbow) ||
+    !isVisibleKeypoint(leftWrist) ||
+    !isVisibleKeypoint(rightWrist)
+  ) {
+    return { label: "Pose", value: "Show Full Arms", tone: "warning" };
+  }
+
+  const wristSpan = Math.abs(leftWrist.x - rightWrist.x);
+  const elbowSpan = Math.abs(leftElbow.x - rightElbow.x);
+  const wristHeightError =
+    (Math.abs(leftWrist.y - geometry.shoulderY) + Math.abs(rightWrist.y - geometry.shoulderY)) /
+    (2 * geometry.torsoHeight);
+  const isWide =
+    wristSpan > geometry.shoulderSpan * 2.05 && elbowSpan > geometry.shoulderSpan * 1.42;
+
+  return isWide && wristHeightError < 0.42
+    ? { label: "Pose", value: "T-Pose", tone: "good" }
+    : { label: "Pose", value: "Straighten T-Pose", tone: "warning" };
+}
+
+function getOverheadReachMetric(keypoints: NamedKeypoints): ScanMetric {
+  const geometry = getTorsoGeometry(keypoints);
+  const leftElbow = keypoints.left_elbow;
+  const rightElbow = keypoints.right_elbow;
+  const leftWrist = keypoints.left_wrist;
+  const rightWrist = keypoints.right_wrist;
+
+  if (
+    !geometry ||
+    !isVisibleKeypoint(leftElbow) ||
+    !isVisibleKeypoint(rightElbow) ||
+    !isVisibleKeypoint(leftWrist) ||
+    !isVisibleKeypoint(rightWrist)
+  ) {
+    return { label: "Pose", value: "Show Full Arms", tone: "warning" };
+  }
+
+  const wristsHigh =
+    leftWrist.y < geometry.shoulderY - geometry.torsoHeight * 0.48 &&
+    rightWrist.y < geometry.shoulderY - geometry.torsoHeight * 0.48;
+  const elbowsHigh = leftElbow.y < geometry.shoulderY && rightElbow.y < geometry.shoulderY;
+  const wristsApart = Math.abs(leftWrist.x - rightWrist.x) > geometry.shoulderSpan * 0.78;
+
+  return wristsHigh && elbowsHigh && wristsApart
+    ? { label: "Pose", value: "Y-Pose", tone: "good" }
+    : { label: "Pose", value: "Reach Higher + Apart", tone: "warning" };
+}
+
+function getWideStanceMetric(keypoints: NamedKeypoints): ScanMetric {
+  const geometry = getTorsoGeometry(keypoints);
+  const leftKnee = keypoints.left_knee;
+  const rightKnee = keypoints.right_knee;
+  const leftAnkle = keypoints.left_ankle;
+  const rightAnkle = keypoints.right_ankle;
+
+  if (
+    !geometry ||
+    !isVisibleKeypoint(leftKnee) ||
+    !isVisibleKeypoint(rightKnee) ||
+    !isVisibleKeypoint(leftAnkle) ||
+    !isVisibleKeypoint(rightAnkle)
+  ) {
+    return { label: "Pose", value: "Show Both Legs", tone: "warning" };
+  }
+
+  const ankleSpan = Math.abs(leftAnkle.x - rightAnkle.x);
+  const kneeSpan = Math.abs(leftKnee.x - rightKnee.x);
+  const isSeparated =
+    ankleSpan > Math.max(geometry.hipSpan * 1.55, geometry.shoulderSpan * 0.76) &&
+    kneeSpan > geometry.hipSpan * 1.05;
+
+  return isSeparated
+    ? { label: "Pose", value: "Wide Stance", tone: "good" }
+    : { label: "Pose", value: "Step Feet Wider", tone: "warning" };
+}
+
+function getTorsoGeometry(keypoints: NamedKeypoints) {
+  const leftShoulder = keypoints.left_shoulder;
+  const rightShoulder = keypoints.right_shoulder;
+  const leftHip = keypoints.left_hip;
+  const rightHip = keypoints.right_hip;
+
+  if (
+    !isVisibleKeypoint(leftShoulder) ||
+    !isVisibleKeypoint(rightShoulder) ||
+    !isVisibleKeypoint(leftHip) ||
+    !isVisibleKeypoint(rightHip)
+  ) {
+    return null;
+  }
+
+  const shoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+  const hipY = (leftHip.y + rightHip.y) / 2;
+
+  return {
+    hipSpan: Math.abs(leftHip.x - rightHip.x),
+    hipY,
+    shoulderSpan: Math.abs(leftShoulder.x - rightShoulder.x),
+    shoulderY,
+    torsoHeight: Math.max(1, Math.abs(hipY - shoulderY)),
+  };
 }
 
 function estimateOrientation(keypoints: NamedKeypoints): "front-back" | "side" | "angled" {
@@ -359,7 +527,9 @@ function getGuidance(metrics: ScanMetric[], scanState: ScanState): string {
   }
 
   if (warning.label === "Detail") {
-    return "Keep your face and both open hands inside the detail guide.";
+    return scanState === "hand-detail"
+      ? "Hold both open palms inside the hand guides."
+      : "Keep your whole face inside the detail guide.";
   }
 
   if (warning.label === "Distance") {
@@ -373,6 +543,10 @@ function getGuidance(metrics: ScanMetric[], scanState: ScanState): string {
   }
 
   if (warning.label === "Pose") {
+    if (["arm-span", "overhead-reach", "wide-stance"].includes(scanState)) {
+      return SCAN_STEPS[scanState].instruction;
+    }
+
     return scanState === "side-view" || scanState === "right-side-view"
       ? "Turn until your side faces the camera."
       : "Face squarely toward the scan direction.";

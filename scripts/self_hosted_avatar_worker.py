@@ -126,7 +126,14 @@ def validate_inputs(request: dict[str, Any]) -> dict[str, Any]:
         and path_value.exists()
     ]
     input_sequence = request.get("inputSequence", {})
-    video_metadata = input_sequence.get("video")
+    sequence_frames = input_sequence.get("frames") if isinstance(input_sequence, dict) else []
+    valid_sequence_frames = [
+        frame for frame in sequence_frames
+        if isinstance(frame, dict)
+        and (path_value := resolve_workspace_path(frame.get("file")))
+        and path_value.exists()
+    ] if isinstance(sequence_frames, list) else []
+    video_metadata = input_sequence.get("video") if isinstance(input_sequence, dict) else None
     video_path = resolve_workspace_path(
         video_metadata.get("file") if isinstance(video_metadata, dict) else None
     )
@@ -139,6 +146,10 @@ def validate_inputs(request: dict[str, Any]) -> dict[str, Any]:
         "referenceViews": {
             "available": len(valid_reference_views),
             "requested": len(reference_views),
+        },
+        "sequenceFrames": {
+            "available": len(valid_sequence_frames),
+            "requested": len(sequence_frames) if isinstance(sequence_frames, list) else 0,
         },
         "temporalVideo": {
             "exists": bool(video_path and video_path.exists()),
@@ -206,6 +217,7 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
             if key in measurement_values
         }
         silhouette_observations = get_silhouette_observations(request)
+        silhouette_diagnostics = summarize_silhouette_observations(silhouette_observations)
         silhouette_loss_weight = max(
             0.0,
             float(os.environ.get("SMPLX_SILHOUETTE_LOSS_WEIGHT", "0.02")),
@@ -283,13 +295,16 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
             "fitIterations": iterations,
             "fitLoss": round(final_loss, 8),
             "gender": gender,
-            "method": "SMPL-X shared shape fitted to calibrated measurements and guided multi-view silhouettes",
+            "method": "SMPL-X shared shape fitted to calibrated measurements and yaw-balanced guided-video silhouettes",
             "modelDirectory": str(model_dir),
-            "schemaVersion": "smplx-guided-multiview-fit.v1",
+            "schemaVersion": "smplx-guided-multiview-fit.v2",
             "betaPriorWeight": beta_prior_weight,
             "silhouetteObservationCount": len(silhouette_observations),
+            "silhouetteFrameCount": silhouette_diagnostics["frameCount"],
             "silhouetteLossWeight": silhouette_loss_weight,
-            "silhouetteViewCount": len({item["view"] for item in silhouette_observations}),
+            "silhouetteSequenceFrameCount": silhouette_diagnostics["sequenceFrameCount"],
+            "silhouetteViewCount": silhouette_diagnostics["frameCount"],
+            "silhouetteYawBinCount": silhouette_diagnostics["yawBinCount"],
             "sourceMeasurementsCm": measurement_values,
         })
         return {
@@ -298,8 +313,11 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
             "gender": gender,
             "betaPriorWeight": beta_prior_weight,
             "silhouetteObservationCount": len(silhouette_observations),
+            "silhouetteFrameCount": silhouette_diagnostics["frameCount"],
             "silhouetteLossWeight": silhouette_loss_weight,
-            "silhouetteViewCount": len({item["view"] for item in silhouette_observations}),
+            "silhouetteSequenceFrameCount": silhouette_diagnostics["sequenceFrameCount"],
+            "silhouetteViewCount": silhouette_diagnostics["frameCount"],
+            "silhouetteYawBinCount": silhouette_diagnostics["yawBinCount"],
             "mesh": {
                 "faces": int(len(model.faces)),
                 "vertices": int(fitted_vertices.shape[0]),
@@ -400,10 +418,20 @@ def predict_silhouette_errors(
 
 
 def get_silhouette_observations(request: dict[str, Any]) -> list[dict[str, Any]]:
-    views = request.get("inputReferenceViews")
+    reference_views = request.get("inputReferenceViews")
+    input_sequence = request.get("inputSequence")
+    sequence_frames = input_sequence.get("frames") if isinstance(input_sequence, dict) else None
+    candidates: list[tuple[str, dict[str, Any]]] = []
 
-    if not isinstance(views, list):
-        return []
+    if isinstance(sequence_frames, list):
+        candidates.extend(
+            ("sequence", frame) for frame in sequence_frames if isinstance(frame, dict)
+        )
+
+    if isinstance(reference_views, list):
+        candidates.extend(
+            ("reference", view) for view in reference_views if isinstance(view, dict)
+        )
 
     observations: list[dict[str, Any]] = []
     section_rows = {
@@ -412,8 +440,15 @@ def get_silhouette_observations(request: dict[str, Any]) -> list[dict[str, Any]]
         "hips": 0.50,
     }
 
-    for view_index, view in enumerate(views):
-        if not isinstance(view, dict):
+    seen_sources: set[str] = set()
+
+    for view_index, (source_kind, view) in enumerate(candidates):
+        if not is_geometry_capture(view):
+            continue
+
+        source_key = str(view.get("sourceFile") or view.get("file") or view_index)
+
+        if source_key in seen_sources:
             continue
 
         vision = view.get("vision")
@@ -432,7 +467,7 @@ def get_silhouette_observations(request: dict[str, Any]) -> list[dict[str, Any]]
 
         body_height = body_bounds[3] - body_bounds[1] + 1
         center_x = (body_bounds[0] + body_bounds[2]) / 2
-        view_name = str(view.get("sourceFile") or view.get("file") or view_index)
+        view_name = source_key
         segmentation_quality = (
             str(segmentation.get("quality")) if isinstance(segmentation, dict) else "poor"
         )
@@ -441,6 +476,7 @@ def get_silhouette_observations(request: dict[str, Any]) -> list[dict[str, Any]]
             "partial": 0.5,
             "poor": 0.25,
         }.get(segmentation_quality, 0.25)
+        previous_observation_count = len(observations)
 
         for section, normalized_y in section_rows.items():
             row = round(body_bounds[1] + (1 - normalized_y) * (body_height - 1))
@@ -461,13 +497,79 @@ def get_silhouette_observations(request: dict[str, Any]) -> list[dict[str, Any]]
 
             observations.append({
                 "section": section,
+                "sourceKind": source_kind,
                 "view": view_name,
                 "weight": observation_weight,
                 "widthRatio": width_ratio,
+                "yawBin": get_yaw_bin(float(yaw_degrees)),
                 "yawDeg": float(yaw_degrees),
             })
 
+        if len(observations) > previous_observation_count:
+            seen_sources.add(source_key)
+
+    return balance_silhouette_observations(observations)
+
+
+def is_geometry_capture(view: dict[str, Any]) -> bool:
+    reconstruction = view.get("reconstruction")
+
+    if isinstance(reconstruction, dict) and reconstruction.get("captureRole"):
+        return reconstruction.get("captureRole") == "geometry"
+
+    return view.get("state") in {
+        "front-view",
+        "rotate-left",
+        "side-view",
+        "rotate-to-back",
+        "back-view",
+        "rotate-right",
+        "right-side-view",
+        "return-front",
+    }
+
+
+def get_yaw_bin(yaw_degrees: float) -> int:
+    return int(((yaw_degrees + 22.5) % 360) // 45)
+
+
+def balance_silhouette_observations(
+    observations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+
+    for observation in observations:
+        key = (str(observation["section"]), int(observation["yawBin"]))
+        groups.setdefault(key, []).append(observation)
+
+    for group in groups.values():
+        group_weight = sum(float(item["weight"]) for item in group)
+
+        if group_weight <= 0:
+            continue
+
+        for item in group:
+            item["weight"] = float(item["weight"]) / group_weight
+
     return observations
+
+
+def summarize_silhouette_observations(
+    observations: list[dict[str, Any]],
+) -> dict[str, int]:
+    frame_names = {str(item["view"]) for item in observations}
+    sequence_names = {
+        str(item["view"])
+        for item in observations
+        if item.get("sourceKind") == "sequence"
+    }
+    yaw_bins = {int(item["yawBin"]) for item in observations}
+
+    return {
+        "frameCount": len(frame_names),
+        "sequenceFrameCount": len(sequence_names),
+        "yawBinCount": len(yaw_bins),
+    }
 
 
 def decode_rle_mask(payload: Any) -> list[list[int]] | None:

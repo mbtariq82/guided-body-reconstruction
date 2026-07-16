@@ -1,6 +1,6 @@
 # Human Reconstruction Roadmap
 
-Updated: 2026-07-13
+Updated: 2026-07-15
 
 ## Accuracy Objective
 
@@ -10,12 +10,13 @@ Recover a metric, animatable, identity-consistent human model from one guided sm
 
 - Fixed-camera full-body geometry pass with a closed 360-degree turn.
 - Neutral front/back holds and both side-profile holds.
+- T-pose, overhead Y-pose, and wide-stance visibility passes.
 - Controlled arm motion isolated from body-shape fitting.
-- Separate high-resolution face and hands pass.
+- Separate high-resolution face and hand passes with spoken self-capture guidance.
 - Continuous temporal video plus quality-approved keyframes.
 - Angle-balanced reference selection using estimated yaw.
 - MoveNet landmarks and local MediaPipe person masks.
-- Calibrated measurements and direct multi-view silhouette profile constraints.
+- Calibrated measurements and yaw-balanced silhouette profiles from the complete approved neutral sequence.
 - Shared SMPL-X beta fitting and smooth-normal GLB export.
 - Optional ECON, LHM, and LHM++ worker adapters.
 - Surface, silhouette, and topology inspection in the web workbench.
@@ -44,10 +45,10 @@ Report per-measurement error estimates, capture coverage, fitting residuals, vie
 
 ## Engineering Milestones
 
-1. Replace sparse pose landmarks with dense body, face, and hand landmarks plus world coordinates.
-2. Add a calibrated perspective camera model and solve intrinsics/extrinsics jointly.
+1. Add a calibrated perspective camera model and solve focal length, pitch, roll, and per-frame translation.
+2. Fit one shared shape over the complete video while allowing per-frame pose and camera parameters.
 3. Replace section-width silhouette losses with differentiable full-mask rendering.
-4. Fit one shared shape over the complete video while allowing per-frame articulation.
+4. Replace sparse MoveNet observations with dense body, face, hand, and foot landmarks plus world coordinates.
 5. Add temporal tracking and reject inconsistent masks or landmark identities.
 6. Run checkpoint-backed ECON and LHM++ on a Linux/NVIDIA worker.
 7. Build automatic face/body registration between the high-detail output and SMPL-X.
@@ -77,3 +78,4 @@ Use calibrated tape or anthropometer measurements, a reference body scanner, and
 - EasyMocap: https://github.com/zju3dv/EasyMocap
 - 4DHumans: https://github.com/shubham-goel/4D-Humans
 - MediaPipe Pose Landmarker: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker
+- Capture protocol evidence and ablations: ./capture-protocol-research.md

@@ -122,7 +122,7 @@ function getBlockingDetail(metric: ScanMetric): string {
   }
 
   if (metric.label === "Pose") {
-    return "Match the requested scan angle before capture continues.";
+    return "Match the requested body pose before capture continues.";
   }
 
   return `${metric.label} needs attention before capture continues.`;

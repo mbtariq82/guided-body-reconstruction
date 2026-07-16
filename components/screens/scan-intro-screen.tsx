@@ -1,5 +1,13 @@
 import type { MouseEventHandler } from "react";
-import { ArrowRight, Clock3, Lightbulb, Ruler, Shirt, UserRoundCheck } from "lucide-react";
+import {
+  ArrowRight,
+  Camera,
+  Clock3,
+  Lightbulb,
+  Ruler,
+  Shirt,
+  UserRoundCheck,
+} from "lucide-react";
 import { PrimaryLink } from "@/components/ui/primary-button";
 
 type ScanIntroScreenProps = {
@@ -10,13 +18,18 @@ type ScanIntroScreenProps = {
 const preparationItems = [
   {
     icon: Clock3,
-    title: "One controlled sequence",
-    copy: "You will rotate slowly, hold both profiles, move your arms, then capture identity detail.",
+    title: "Allow about 90 seconds",
+    copy: "Spoken prompts guide a slow turn, three visibility poses, motion, face, and hands.",
+  },
+  {
+    icon: Camera,
+    title: "Fix the rear 1x camera",
+    copy: "Place the phone upright near pelvis height. Do not use ultrawide, zoom, or move it during the body pass.",
   },
   {
     icon: Shirt,
     title: "Wear fitted clothing",
-    copy: "Avoid bulky jackets, loose layers, and large accessories.",
+    copy: "Use matte, close-fitting clothes, bare feet, tied-back hair, and no large accessories.",
   },
   {
     icon: Lightbulb,
@@ -25,8 +38,8 @@ const preparationItems = [
   },
   {
     icon: Ruler,
-    title: "Stand around 2 metres away",
-    copy: "Your full body should fit inside the camera frame.",
+    title: "Start 2.5 to 3 metres away",
+    copy: "Keep your full body, floor contact, and space above your raised hands inside the frame.",
   },
 ];
 

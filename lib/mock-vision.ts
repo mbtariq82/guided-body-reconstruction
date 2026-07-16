@@ -17,8 +17,12 @@ const guidanceByState: Record<ScanState, string[]> = {
   "rotate-right": ["Turn slowly.", "Keep your full body visible.", "Approaching right side."],
   "right-side-view": ["Pause here.", "Body fully visible.", "Great right profile."],
   "return-front": ["Keep turning slowly.", "Closing the rotation.", "Perfect. Face the camera."],
+  "arm-span": ["Raise both arms.", "Straighten your elbows.", "Hold the T-pose."],
+  "overhead-reach": ["Reach overhead.", "Keep your arms apart.", "Hold the Y-pose."],
+  "wide-stance": ["Step both feet out.", "Keep both legs visible.", "Hold the wide stance."],
   "motion-range": ["Raise both arms slowly.", "Hold shoulder height briefly.", "Lower both arms slowly."],
-  "identity-detail": ["Step closer.", "Show both open hands.", "Keep your face sharp and still."],
+  "identity-detail": ["Step closer.", "Face forward.", "Turn your head slightly left and right."],
+  "hand-detail": ["Show both open palms.", "Spread your fingers.", "Keep both hands sharp."],
   finish: ["Scan complete."],
 };
 
@@ -79,6 +83,24 @@ const metricsByState: Record<ScanState, ScanMetric[]> = {
     { label: "Rotation", value: "Steady", tone: "good" },
     { label: "Body", value: "Fully Visible", tone: "good" },
   ],
+  "arm-span": [
+    { label: "Lighting", value: "Good", tone: "good" },
+    { label: "Distance", value: "Ideal", tone: "good" },
+    { label: "Pose", value: "T-Pose", tone: "good" },
+    { label: "Body", value: "Fully Visible", tone: "good" },
+  ],
+  "overhead-reach": [
+    { label: "Lighting", value: "Good", tone: "good" },
+    { label: "Distance", value: "Ideal", tone: "good" },
+    { label: "Pose", value: "Y-Pose", tone: "good" },
+    { label: "Body", value: "Fully Visible", tone: "good" },
+  ],
+  "wide-stance": [
+    { label: "Lighting", value: "Good", tone: "good" },
+    { label: "Distance", value: "Ideal", tone: "good" },
+    { label: "Pose", value: "Wide Stance", tone: "good" },
+    { label: "Body", value: "Fully Visible", tone: "good" },
+  ],
   "motion-range": [
     { label: "Lighting", value: "Good", tone: "good" },
     { label: "Distance", value: "Ideal", tone: "good" },
@@ -88,7 +110,13 @@ const metricsByState: Record<ScanState, ScanMetric[]> = {
   "identity-detail": [
     { label: "Lighting", value: "Good", tone: "good" },
     { label: "Sharpness", value: "Clear", tone: "good" },
-    { label: "Detail", value: "Face + Hands", tone: "good" },
+    { label: "Detail", value: "Face Clear", tone: "good" },
+    { label: "Distance", value: "Detail Range", tone: "good" },
+  ],
+  "hand-detail": [
+    { label: "Lighting", value: "Good", tone: "good" },
+    { label: "Sharpness", value: "Clear", tone: "good" },
+    { label: "Detail", value: "Both Hands", tone: "good" },
     { label: "Distance", value: "Detail Range", tone: "good" },
   ],
   finish: [],

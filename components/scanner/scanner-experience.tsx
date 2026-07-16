@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RotateCcw, SwitchCamera, X } from "lucide-react";
+import { RotateCcw, SwitchCamera, Volume2, VolumeX, X } from "lucide-react";
 import { FinishScreen } from "@/components/screens/finish-screen";
 import { PrimaryButton } from "@/components/ui/primary-button";
 import { useMockGuidance } from "@/hooks/use-mock-guidance";
@@ -27,7 +27,7 @@ import { ScanProgressRail } from "./scan-progress-rail";
 import { SilhouetteOverlay } from "./silhouette-overlay";
 
 const autoStartCaptureDelayMs = 1400;
-const captureFrameIntervalMs = 650;
+const captureFrameIntervalMs = 500;
 
 type ScannerExperienceProps = {
   cameraFacingMode: CameraFacingMode;
@@ -96,6 +96,7 @@ export function ScannerExperience({
   const videoPhaseTimelineRef = useRef<CapturedScanVideo["phaseTimeline"]>([]);
   const autoStartTriggeredRef = useRef(false);
   const [autoStartProgress, setAutoStartProgress] = useState(0);
+  const [voiceGuidanceEnabled, setVoiceGuidanceEnabled] = useState(true);
   const mockGuidance = useMockGuidance(scanState, scanState !== "finish");
   const poseQuality = usePoseQuality({
     active: Boolean(stream) && !useMockCamera && scanState !== "finish",
@@ -281,6 +282,20 @@ export function ScannerExperience({
   }, [scanState]);
 
   useEffect(() => {
+    if (!voiceGuidanceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) {
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const prompt = new SpeechSynthesisUtterance(`${step.title}. ${step.instruction}`);
+    prompt.rate = 0.94;
+    prompt.pitch = 1;
+    window.speechSynthesis.speak(prompt);
+
+    return () => window.speechSynthesis.cancel();
+  }, [scanState, step.instruction, step.title, voiceGuidanceEnabled]);
+
+  useEffect(() => {
     if (scanState !== "position-user" || !isAutoStartReady || autoStartTriggeredRef.current) {
       setAutoStartProgress(0);
       return;
@@ -371,6 +386,16 @@ export function ScannerExperience({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            aria-label={voiceGuidanceEnabled ? "Mute spoken guidance" : "Enable spoken guidance"}
+            aria-pressed={voiceGuidanceEnabled}
+            className="grid h-11 w-11 place-items-center rounded-full bg-black/30 text-white ring-1 ring-white/20 backdrop-blur transition hover:bg-black/44"
+            onClick={() => setVoiceGuidanceEnabled((enabled) => !enabled)}
+            title={voiceGuidanceEnabled ? "Mute spoken guidance" : "Enable spoken guidance"}
+            type="button"
+          >
+            {voiceGuidanceEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+          </button>
           {!useMockCamera ? (
             <button
               aria-label={`Switch to ${cameraFacingMode === "environment" ? "front" : "back"} camera`}

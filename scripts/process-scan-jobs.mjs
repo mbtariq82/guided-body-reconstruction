@@ -21,8 +21,12 @@ const fallbackMinimumFramesByPhase = {
   "rotate-right": 8,
   "right-side-view": 5,
   "return-front": 8,
+  "arm-span": 7,
+  "overhead-reach": 7,
+  "wide-stance": 7,
   "motion-range": 8,
   "identity-detail": 6,
+  "hand-detail": 6,
 };
 const fallbackTargetFramesByPhase = {
   "front-view": 8,
@@ -33,8 +37,12 @@ const fallbackTargetFramesByPhase = {
   "rotate-right": 10,
   "right-side-view": 6,
   "return-front": 10,
+  "arm-span": 10,
+  "overhead-reach": 10,
+  "wide-stance": 10,
   "motion-range": 10,
   "identity-detail": 8,
+  "hand-detail": 8,
 };
 const maximumFrameCount = 500;
 const maximumArchiveBytes = 150 * 1024 * 1024;
@@ -179,11 +187,13 @@ async function readArchiveDetail(archivePath) {
           dataUrl: frameBytes
             ? `data:${frame.mimeType ?? "image/jpeg"};base64,${Buffer.from(frameBytes).toString("base64")}`
             : null,
+          elapsedMs: frame.elapsedMs ?? 0,
           fileName: frame.fileName ?? "",
           height: frame.height ?? 0,
           id: frame.id ?? frame.fileName ?? "",
           metrics: Array.isArray(frame.metrics) ? frame.metrics : [],
           phaseProgress: frame.phaseProgress ?? 0,
+          reconstruction: frame.reconstruction ?? null,
           source: frame.source ?? "mock-camera",
           state: frame.state ?? "front-view",
           stateLabel: frame.stateLabel ?? frame.state ?? "Unknown",

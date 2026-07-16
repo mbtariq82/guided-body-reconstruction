@@ -220,6 +220,7 @@ function buildPreparedJob({
       selectedFrames: {
         back: selectedFrames.back?.fileName ?? null,
         front: selectedFrames.front?.fileName ?? null,
+        hands: selectedFrames.hands?.fileName ?? null,
         identity: selectedFrames.identity?.fileName ?? null,
         side: selectedFrames.side?.fileName ?? null,
       },
@@ -262,6 +263,11 @@ async function writeSelfHostedRequest({
     "identity-detail",
     selectedFrames.identity,
   );
+  const handFrameFile = await writeSelectedFrame(
+    directories.inputDirectory,
+    "hand-detail",
+    selectedFrames.hands,
+  );
   const referenceViews = await writeReferenceViews(
     directories.inputDirectory,
     selectedFrames.referenceViews,
@@ -303,6 +309,7 @@ async function writeSelfHostedRequest({
     inputIdentityFrame: identityFrameFile
       ? relativeToWorkspace(identityFrameFile)
       : null,
+    inputHandFrame: handFrameFile ? relativeToWorkspace(handFrameFile) : null,
     inputReferenceViews: referenceViews.map((view) => ({
       ...view,
       file: relativeToWorkspace(view.file),
@@ -340,6 +347,7 @@ async function writeSelfHostedRequest({
       front: selectedFrames.front?.vision ?? null,
       side: selectedFrames.side?.vision ?? null,
       identity: selectedFrames.identity?.vision ?? null,
+      hands: selectedFrames.hands?.vision ?? null,
     },
     sessionId,
     warnings,
@@ -382,6 +390,7 @@ async function writeReferenceViews(inputDirectory, frames) {
     return {
       file: filePath,
       phaseProgress: frame.phaseProgress ?? null,
+      reconstruction: frame.reconstruction ?? null,
       sourceFile: frame.fileName,
       state: frame.state,
       vision: frame.vision ?? null,
@@ -409,8 +418,12 @@ async function writeFrameSequence(inputDirectory, frames) {
     return {
       elapsedMs: frame.elapsedMs ?? null,
       file: filePath,
+      metrics: frame.metrics ?? [],
+      phaseProgress: frame.phaseProgress ?? null,
+      reconstruction: frame.reconstruction ?? null,
       sourceFile: frame.fileName,
       state: frame.state,
+      vision: frame.vision ?? null,
       yawDeg: getFrameYawDeg(frame),
     };
   }));
@@ -534,6 +547,7 @@ function selectSelfHostedInputFrames(detail) {
   return {
     back,
     front,
+    hands: selectBestFrame(detail.frames, ["hand-detail"]),
     identity: selectBestFrame(detail.frames, ["identity-detail"]),
     referenceViews: selectAngleBalancedReferenceViews(detail.frames, 8),
     side,
@@ -588,7 +602,7 @@ function selectAngleBalancedReferenceViews(frames, targetCount) {
   const candidates = frames.filter(
     (frame) =>
       frame?.dataUrl &&
-      frame.reconstruction?.captureRole !== "identity" &&
+      isGeometryFrame(frame) &&
       Number.isFinite(getFrameYawDeg(frame)),
   );
   const selected = [];
@@ -616,6 +630,23 @@ function selectAngleBalancedReferenceViews(frames, targetCount) {
   return selected.sort(
     (left, right) => normalizeYawDeg(getFrameYawDeg(left)) - normalizeYawDeg(getFrameYawDeg(right)),
   );
+}
+
+function isGeometryFrame(frame) {
+  if (frame?.reconstruction?.captureRole) {
+    return frame.reconstruction.captureRole === "geometry";
+  }
+
+  return [
+    "front-view",
+    "rotate-left",
+    "side-view",
+    "rotate-to-back",
+    "back-view",
+    "rotate-right",
+    "right-side-view",
+    "return-front",
+  ].includes(frame?.state);
 }
 
 function findFrameByFileName(frames, fileName) {

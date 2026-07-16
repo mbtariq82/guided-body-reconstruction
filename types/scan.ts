@@ -10,9 +10,24 @@ export type ScanState =
   | "rotate-right"
   | "right-side-view"
   | "return-front"
+  | "arm-span"
+  | "overhead-reach"
+  | "wide-stance"
   | "motion-range"
   | "identity-detail"
+  | "hand-detail"
   | "finish";
+
+export type CapturePoseTarget =
+  | "neutral-a"
+  | "rotation"
+  | "side-neutral"
+  | "t-pose"
+  | "y-pose"
+  | "wide-stance"
+  | "controlled-motion"
+  | "face-detail"
+  | "hand-detail";
 
 export type CameraPermissionStatus =
   | "idle"
@@ -53,6 +68,7 @@ export type CapturePhaseReconstructionTarget = {
   captureRole: "geometry" | "motion" | "identity";
   guidance: string;
   minimumFrameCount: number;
+  poseTarget: CapturePoseTarget;
   requiredSignals: string[];
   state: ScanState;
   targetFrameCount: number;
@@ -94,6 +110,7 @@ export type CapturedFrameReconstruction = {
   captureRole: "geometry" | "motion" | "identity";
   minimumFrameCount: number;
   phaseFrameNumber: number;
+  poseTarget: CapturePoseTarget;
   requiredSignals: string[];
   targetFrameCount: number;
   yawDeg: number | null;
