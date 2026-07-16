@@ -268,6 +268,13 @@ export async function createCaptureSessionArchive(session: CaptureSession): Prom
       new Uint8Array(await video.blob.arrayBuffer()),
       { level: 0 },
     ];
+
+    if (video.poseTrack) {
+      files[`tracks/${video.poseTrack.fileName}`] = [
+        strToU8(JSON.stringify(video.poseTrack, null, 2)),
+        { level: 6 },
+      ];
+    }
   }
 
   const zipBytes = await zipCaptureFiles(files);
@@ -349,7 +356,20 @@ function buildSessionManifest(session: CaptureSession) {
       phases: review.phaseSummaries.map(({ thumbnailDataUrl: _thumbnailDataUrl, ...phase }) => phase),
     },
     reconstructionProfile: session.reconstructionProfile,
-    videos: session.videos.map(({ blob: _blob, ...video }) => video),
+    videos: session.videos.map(({ blob: _blob, poseTrack, ...video }) => ({
+      ...video,
+      poseTrack: poseTrack
+        ? {
+            capturedAt: poseTrack.capturedAt,
+            fileName: poseTrack.fileName,
+            frameCount: poseTrack.frameCount,
+            provider: poseTrack.provider,
+            sampleIntervalTargetMs: poseTrack.sampleIntervalTargetMs,
+            schemaVersion: poseTrack.schemaVersion,
+            sessionElapsedOffsetMs: poseTrack.sessionElapsedOffsetMs,
+          }
+        : null,
+    })),
     states: Object.values(SCAN_STEPS)
       .filter((step) => step.capturesData)
       .map((step) => ({

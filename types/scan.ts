@@ -130,6 +130,15 @@ export type CapturedPoseKeypoint = {
   score: number | null;
   x: number;
   y: number;
+  z?: number | null;
+};
+
+export type CapturedPoseWorldKeypoint = {
+  name: string;
+  score: number | null;
+  x: number;
+  y: number;
+  z: number;
 };
 
 export type CapturedSegmentationRowKey =
@@ -169,10 +178,15 @@ export type CapturedFrameVision = {
   backend: string | null;
   bodyBounds: CapturedBodyBounds | null;
   keypoints: CapturedPoseKeypoint[];
-  provider: "tensorflow-movenet" | "tensorflow-movenet+mediapipe-selfie-segmentation";
+  provider:
+    | "tensorflow-movenet"
+    | "tensorflow-movenet+mediapipe-selfie-segmentation"
+    | "mediapipe-blazepose"
+    | "mediapipe-blazepose+mediapipe-selfie-segmentation";
   segmentation: CapturedPersonSegmentation | null;
   status: string;
   updatedAt: number | null;
+  worldKeypoints?: CapturedPoseWorldKeypoint[];
 };
 
 export type CapturedFrame = {
@@ -208,6 +222,28 @@ export type CapturedScanVideoPhase = {
   state: ScanState;
 };
 
+export type CapturedTemporalPoseFrame = {
+  elapsedMs: number;
+  height: number;
+  keypoints: CapturedPoseKeypoint[];
+  phaseProgress: number;
+  state: ScanState;
+  width: number;
+  worldKeypoints: CapturedPoseWorldKeypoint[];
+  yawDeg: number | null;
+};
+
+export type CapturedPoseTrack = {
+  capturedAt: string;
+  fileName: string;
+  frameCount: number;
+  frames: CapturedTemporalPoseFrame[];
+  provider: "mediapipe-blazepose";
+  sampleIntervalTargetMs: number;
+  schemaVersion: "guided-pose-track.v1";
+  sessionElapsedOffsetMs: number;
+};
+
 export type CapturedScanVideo = {
   blob: Blob;
   camera: {
@@ -223,6 +259,7 @@ export type CapturedScanVideo = {
   id: string;
   mimeType: string;
   phaseTimeline: CapturedScanVideoPhase[];
+  poseTrack: CapturedPoseTrack | null;
   sessionId: string;
   sizeBytes: number;
 };

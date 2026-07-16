@@ -25,7 +25,8 @@ The first working milestone includes:
 - Front and back holds, both side profiles, four slow quarter-turn sweeps, T/Y/wide-stance visibility poses, controlled arm motion, and separate face and hand detail passes.
 - Continuous MP4/WebM recording with phase timestamps.
 - Quality-gated JPEG reference frames selected from the temporal sequence.
-- MoveNet landmarks and locally hosted MediaPipe person segmentation.
+- Self-hosted MediaPipe BlazePose tracking with 33 image landmarks, 33 world landmarks, and local person segmentation.
+- A synchronized `guided-pose-track.v1` sampled throughout the recorded video and archived separately from JPEG keyframes.
 - Compact RLE person masks, body bounds, framing metrics, estimated yaw, and camera settings in the session manifest.
 - Height-calibrated local measurements.
 - Local session validation, processing, storage, and diagnostics.
@@ -56,7 +57,7 @@ The phone remains fixed while the subject moves. Geometry phases keep the full b
 13. Close face pass with small head turns.
 14. Close open-palm hand pass.
 
-Each geometry frame records its capture role and estimated yaw. The worker receives eight angle-balanced references, the complete approved frame sequence, temporal video metadata, masks, landmarks, measurements, and camera metadata.
+Each geometry frame records its capture role and estimated yaw. The worker receives eight angle-balanced references, the complete approved frame sequence, the synchronized dense pose track, temporal video metadata, masks, landmarks, measurements, and camera metadata.
 
 The evidence and planned ablations behind this sequence are documented in [`docs/capture-protocol-research.md`](docs/capture-protocol-research.md).
 
@@ -160,6 +161,7 @@ SELF_HOSTED_AVATAR_COMMAND="python /path/to/reconstruct.py {input} {output}" npm
 - `scripts/process-scan-jobs.mjs` - validation, measurements, and reconstruction handoff
 - `scripts/self_hosted_avatar_worker.py` - SMPL-X and research-backend adapter
 - `scripts/smplx_temporal_fitter.py` - perspective camera, per-frame pose, and soft-silhouette optimisation
+- `app/api/vision-assets/pose/` - allowlisted local BlazePose model and WebAssembly assets
 - `types/` - versioned capture and reconstruction contracts
 - `.scan-uploads/` - ignored local session and output store
 - `.avatar-models/` - ignored models, repositories, and checkpoints
@@ -170,8 +172,8 @@ The current SMPL-X pipeline is measurement-, landmark-, and silhouette-constrain
 
 The next accuracy milestones are:
 
-1. Replace sparse MoveNet observations with dense body, foot, hand, and face landmarks and stable temporal tracks.
-2. Decode and fit denser samples from the continuous video instead of only the quality-approved reference sequence.
+1. Add track-level outlier rejection, occlusion reasoning, and uncertainty before selecting optimization frames.
+2. Add dedicated dense face and hand landmark tracks for the close detail passes.
 3. Replace the CPU surface-point silhouette approximation with triangle rasterization on a Linux/NVIDIA worker.
 4. Calibrate or infer camera intrinsics from device metadata instead of relying on a focal prior.
 5. Add learned normal and depth priors for clothed surface refinement.

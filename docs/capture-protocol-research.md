@@ -1,6 +1,6 @@
 # Guided Capture Protocol Research
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 
 ## Research Question
 
@@ -51,11 +51,14 @@ Spoken prompts are enabled because a person using the rear camera cannot reliabl
 - T, Y, wide-stance, and motion frames constrain pose, limb proportions, visibility, and future clothed-surface reconstruction. Their silhouettes must not be interpreted as neutral torso cross-sections.
 - Face and hand frames contribute part landmarks and appearance. They must not affect body scale.
 - Every approved neutral frame is retained. Loss weights are normalised within 45-degree yaw bins so a long front hold cannot outweigh less frequent side views.
-- Continuous video remains the source for future per-frame pose, camera, optical-flow, and temporal-consistency estimation.
+- A synchronized BlazePose track samples 33 image landmarks and 33 root-relative world landmarks throughout continuous recording. This supplies feet, heels, coarse fingers, and temporal trajectories between saved JPEGs.
+- Continuous video remains the source for future optical flow, appearance refinement, re-tracking, and higher-frequency observations.
 
 ## Current Limits
 
-The V2 worker still uses section-profile silhouette losses rather than full differentiable rendering. It does not yet estimate independent per-frame SMPL-X pose and perspective camera parameters from the video. MoveNet validates body actions but does not provide facial contours or finger joints. The video is retained for those next stages.
+The V2 worker now fits shared SMPL-X shape with per-frame pose and perspective camera parameters. It combines mask-bearing JPEGs with representative samples from a synchronized 33-landmark BlazePose track and uses full-mask soft-silhouette supervision.
+
+BlazePose world landmarks are a learned root-relative pose estimate, not calibrated metric depth. They constrain articulated structure through normalized pairwise geometry while entered height and multi-view masks remain the metric shape anchors. Dedicated face mesh and 21-point hand tracking are still required for identity-level facial contours and finger articulation.
 
 SMPL-X represents an unclothed statistical body prior. A clothing silhouette is not a direct observation of skin. Loose clothing, hair, and masks around crossed limbs require semantic parsing, robust losses, uncertainty, and eventually an explicit clothed surface such as ECON or a registered implicit model.
 
@@ -69,6 +72,7 @@ Run each configuration on repeated captures of the same subjects and compare aga
 4. Neutral video plus T and Y poses.
 5. Full V2 protocol including wide stance and controlled motion.
 6. Full V2 with estimated camera intrinsics and per-frame perspective cameras.
-7. Full V2 with dense differentiable silhouettes and temporal SMPL-X fitting.
+7. Full V2 with differentiable silhouettes and temporal SMPL-X fitting.
+8. Full V2 with synchronized 33-point image/world pose tracks.
 
 Report per-vertex error, region-wise surface distance, measurement MAE, joint error, scan-to-scan repeatability, rejected-frame rate, and uncertainty calibration. The capture protocol should change only when an ablation produces a repeatable gain.

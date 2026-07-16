@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import math
 import os
+import json
 from pathlib import Path
 from typing import Any
 
 
-MOVENET_TO_SMPLX = {
+POSE_TO_SMPLX = {
     "nose": 55,
     "left_eye": 57,
     "right_eye": 56,
@@ -20,12 +21,24 @@ MOVENET_TO_SMPLX = {
     "right_elbow": 19,
     "left_wrist": 20,
     "right_wrist": 21,
+    "left_pinky": 70,
+    "right_pinky": 75,
+    "left_index": 67,
+    "right_index": 72,
+    "left_thumb": 66,
+    "right_thumb": 71,
     "left_hip": 1,
     "right_hip": 2,
     "left_knee": 4,
     "right_knee": 5,
     "left_ankle": 7,
     "right_ankle": 8,
+    "left_heel": 62,
+    "right_heel": 65,
+    "left_foot_index": 60,
+    "right_foot_index": 63,
+    "mouth_left": 113,
+    "mouth_right": 107,
 }
 
 GEOMETRY_STATES = {
@@ -57,7 +70,11 @@ def fit_temporal_smplx(
 ) -> tuple[Any, dict[str, Any]]:
     import smplx  # type: ignore
 
-    maximum_frames = max(4, min(20, int(os.environ.get("SMPLX_TEMPORAL_MAX_FRAMES", "14"))))
+    default_frame_count = "18" if has_pose_track_reference(request) else "14"
+    maximum_frames = max(
+        4,
+        min(24, int(os.environ.get("SMPLX_TEMPORAL_MAX_FRAMES", default_frame_count))),
+    )
     selected_frames = select_temporal_frames(request, maximum_frames)
 
     if len(selected_frames) < 3:
@@ -129,11 +146,21 @@ def fit_temporal_smplx(
     ]
     render_width = max(20, min(96, round(render_height * median_aspect)))
     target_masks = build_target_masks(prepared_frames, render_height, render_width, torch)
-    geometry_indices = [
+    temporal_indices = [
         index for index, frame in enumerate(prepared_frames) if frame["isGeometry"]
     ]
-    if not geometry_indices:
-        geometry_indices = list(range(batch_size))
+    if not temporal_indices:
+        temporal_indices = list(range(batch_size))
+    silhouette_indices = [
+        index
+        for index, frame in enumerate(prepared_frames)
+        if frame["isGeometry"] and frame["hasMask"]
+    ]
+    if not silhouette_indices:
+        silhouette_indices = [
+            index for index, frame in enumerate(prepared_frames) if frame["hasMask"]
+        ]
+    target_world, world_weights = build_world_targets(prepared_frames, torch)
     surface_face_indices = sample_surface_faces(
         model.faces,
         max(600, min(4000, int(os.environ.get("SMPLX_SURFACE_POINT_COUNT", "1800")))),
@@ -143,7 +170,8 @@ def fit_temporal_smplx(
         "bodyPose": body_pose,
         "cameraPitchRoll": camera_pitch_roll,
         "cameraXy": camera_xy,
-        "geometryIndices": geometry_indices,
+        "silhouetteIndices": silhouette_indices,
+        "temporalIndices": temporal_indices,
         "heights": heights,
         "initialBetas": initial_betas.detach().clone(),
         "initialFocal": initial_focal_px,
@@ -159,8 +187,10 @@ def fit_temporal_smplx(
         "surfaceFaceIndices": surface_face_indices,
         "targetKeypoints": target_keypoints,
         "targetMasks": target_masks,
+        "targetWorld": target_world,
         "torch": torch,
         "widths": widths,
+        "worldWeights": world_weights,
         "yawDelta": yaw_delta,
         "betas": betas,
     }
@@ -221,7 +251,10 @@ def fit_temporal_smplx(
         "finalMetrics": final_metrics,
         "frameCount": batch_size,
         "frames": frame_results,
-        "geometryFrameCount": len(geometry_indices),
+        "densePoseTrackFrameCount": sum(
+            1 for frame in prepared_frames if frame["sourceType"] == "pose-track"
+        ),
+        "geometryFrameCount": len(temporal_indices),
         "initialMetrics": initial_metrics,
         "method": "confidence-weighted SMPL-X joints plus differentiable soft-silhouette point splatting",
         "schemaVersion": "smplx-temporal-perspective-fit.v1",
@@ -240,6 +273,7 @@ def fit_temporal_smplx(
             "renderWidth": render_width,
             "surfacePointCount": int(surface_face_indices.shape[0]),
         },
+        "silhouetteFrameCount": len(silhouette_indices),
         "stages": stage_history,
         "status": "succeeded",
     }
@@ -248,11 +282,14 @@ def fit_temporal_smplx(
 def select_temporal_frames(request: dict[str, Any], maximum_frames: int) -> list[dict[str, Any]]:
     sequence = request.get("inputSequence")
     frames = sequence.get("frames") if isinstance(sequence, dict) else None
+    frames = frames if isinstance(frames, list) else []
 
-    if not isinstance(frames, list):
-        return []
-
-    candidates = [frame for frame in frames if is_temporal_candidate(frame)]
+    pose_track_frames = load_pose_track_frames(request)
+    candidates = [
+        frame
+        for frame in [*frames, *pose_track_frames]
+        if is_temporal_candidate(frame)
+    ]
     geometry = [frame for frame in candidates if is_geometry_frame(frame)]
     actions = []
 
@@ -267,7 +304,7 @@ def select_temporal_frames(request: dict[str, Any], maximum_frames: int) -> list
     )
     action_slots = max(0, maximum_frames - geometry_slots)
     actions = actions[:action_slots]
-    selected_geometry = select_angle_and_time_balanced(geometry, geometry_slots)
+    selected_geometry = select_geometry_sources(geometry, geometry_slots)
     selected = selected_geometry + actions
     selected_ids = {frame_identity(frame) for frame in selected}
 
@@ -280,6 +317,12 @@ def select_temporal_frames(request: dict[str, Any], maximum_frames: int) -> list
         selected.extend(remaining[:maximum_frames - len(selected)])
 
     return sorted(selected, key=lambda frame: float(frame.get("elapsedMs") or 0))
+
+
+def has_pose_track_reference(request: dict[str, Any]) -> bool:
+    input_sequence = request.get("inputSequence")
+    metadata = input_sequence.get("poseTrack") if isinstance(input_sequence, dict) else None
+    return isinstance(metadata, dict) and isinstance(metadata.get("file"), str)
 
 
 def is_temporal_candidate(frame: Any) -> bool:
@@ -296,11 +339,120 @@ def is_temporal_candidate(frame: Any) -> bool:
     visible_count = sum(
         1 for point in keypoints or []
         if isinstance(point, dict)
-        and point.get("name") in MOVENET_TO_SMPLX
+        and point.get("name") in POSE_TO_SMPLX
         and isinstance(point.get("score"), (int, float))
         and float(point["score"]) >= 0.25
     )
-    return isinstance(mask, dict) and visible_count >= 8
+    has_dense_track = frame.get("sourceType") == "pose-track"
+    return (isinstance(mask, dict) or has_dense_track) and visible_count >= 8
+
+
+def load_pose_track_frames(request: dict[str, Any]) -> list[dict[str, Any]]:
+    input_sequence = request.get("inputSequence")
+    metadata = input_sequence.get("poseTrack") if isinstance(input_sequence, dict) else None
+    file_value = metadata.get("file") if isinstance(metadata, dict) else None
+
+    if not isinstance(file_value, str) or not file_value:
+        return []
+
+    track_path = Path(file_value)
+    if not track_path.is_absolute():
+        track_path = Path.cwd() / track_path
+
+    try:
+        payload = json.loads(track_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+    if payload.get("schemaVersion") != "guided-pose-track.v1":
+        return []
+
+    frames = payload.get("frames")
+    if not isinstance(frames, list):
+        return []
+    timeline_offset = payload.get("sessionElapsedOffsetMs")
+    timeline_offset = (
+        float(timeline_offset)
+        if isinstance(timeline_offset, (int, float))
+        else 0.0
+    )
+
+    converted = []
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        state = str(frame.get("state") or "unknown")
+        converted.append({
+            "elapsedMs": timeline_offset + float(frame.get("elapsedMs") or 0),
+            "height": frame.get("height"),
+            "phaseProgress": frame.get("phaseProgress"),
+            "reconstruction": {
+                "captureRole": "geometry" if state in GEOMETRY_STATES else "motion",
+                "poseTarget": get_pose_target(state),
+            },
+            "sourceFile": f"{track_path.name}#{index:05d}",
+            "sourceType": "pose-track",
+            "state": state,
+            "vision": {
+                "keypoints": frame.get("keypoints"),
+                "provider": payload.get("provider", "mediapipe-blazepose"),
+                "worldKeypoints": frame.get("worldKeypoints"),
+            },
+            "width": frame.get("width"),
+            "yawDeg": frame.get("yawDeg"),
+        })
+    return converted
+
+
+def get_pose_target(state: str) -> str:
+    return {
+        "arm-span": "t-pose",
+        "overhead-reach": "y-pose",
+        "wide-stance": "wide-stance",
+        "motion-range": "controlled-motion",
+    }.get(state, "neutral-a")
+
+
+def select_geometry_sources(
+    frames: list[dict[str, Any]],
+    target_count: int,
+) -> list[dict[str, Any]]:
+    if target_count <= 0:
+        return []
+
+    mask_frames = [frame for frame in frames if has_segmentation_mask(frame)]
+    track_frames = [frame for frame in frames if frame.get("sourceType") == "pose-track"]
+
+    if not track_frames:
+        return select_angle_and_time_balanced(mask_frames, target_count)
+
+    mask_slots = min(
+        len(mask_frames),
+        target_count,
+        max(min(8, target_count), round(target_count * 0.64)),
+    )
+    track_slots = min(len(track_frames), target_count - mask_slots)
+    selected = [
+        *select_angle_and_time_balanced(mask_frames, mask_slots),
+        *select_angle_and_time_balanced(track_frames, track_slots),
+    ]
+    selected_ids = {frame_identity(frame) for frame in selected}
+
+    if len(selected) < target_count:
+        remaining = sorted(
+            [frame for frame in frames if frame_identity(frame) not in selected_ids],
+            key=frame_observation_score,
+            reverse=True,
+        )
+        selected.extend(remaining[:target_count - len(selected)])
+
+    return selected[:target_count]
+
+
+def has_segmentation_mask(frame: dict[str, Any]) -> bool:
+    vision = frame.get("vision")
+    segmentation = vision.get("segmentation") if isinstance(vision, dict) else None
+    return isinstance(segmentation, dict) and isinstance(segmentation.get("mask"), dict)
 
 
 def is_geometry_frame(frame: dict[str, Any]) -> bool:
@@ -364,13 +516,15 @@ def frame_observation_score(frame: dict[str, Any]) -> float:
         float(point["score"])
         for point in keypoints or []
         if isinstance(point, dict)
-        and point.get("name") in MOVENET_TO_SMPLX
+        and point.get("name") in POSE_TO_SMPLX
         and isinstance(point.get("score"), (int, float))
     ]
     segmentation = vision.get("segmentation") if isinstance(vision, dict) else None
     quality = segmentation.get("quality") if isinstance(segmentation, dict) else "poor"
     quality_bonus = {"good": 2.0, "partial": 0.8}.get(str(quality), 0.0)
-    return sum(scores) + quality_bonus
+    world_keypoints = vision.get("worldKeypoints") if isinstance(vision, dict) else None
+    world_bonus = min(2.5, len(world_keypoints or []) / 12) if isinstance(world_keypoints, list) else 0
+    return sum(scores) + quality_bonus + world_bonus
 
 
 def frame_identity(frame: dict[str, Any]) -> str:
@@ -392,28 +546,37 @@ def prepare_frame(frame: dict[str, Any], torch: Any) -> dict[str, Any] | None:
     vision = frame.get("vision")
     segmentation = vision.get("segmentation") if isinstance(vision, dict) else None
     mask = decode_rle_mask(segmentation.get("mask") if isinstance(segmentation, dict) else None)
-    if mask is None:
+    if mask is None and frame.get("sourceType") != "pose-track":
         return None
     keypoints = {
         str(point.get("name")): point
         for point in (vision.get("keypoints") if isinstance(vision, dict) else []) or []
         if isinstance(point, dict)
     }
-    if len(keypoints) < 8:
+    mapped_keypoints = [name for name in keypoints if name in POSE_TO_SMPLX]
+    if len(mapped_keypoints) < 8:
         return None
+    world_keypoints = {
+        str(point.get("name")): point
+        for point in (vision.get("worldKeypoints") if isinstance(vision, dict) else []) or []
+        if isinstance(point, dict)
+    }
 
     reconstruction = frame.get("reconstruction")
     pose_target = reconstruction.get("poseTarget") if isinstance(reconstruction, dict) else None
     return {
         "elapsedMs": float(frame.get("elapsedMs") or 0),
         "height": float(height),
+        "hasMask": mask is not None,
         "isGeometry": is_geometry_frame(frame),
         "keypoints": keypoints,
-        "mask": torch.tensor(mask, dtype=torch.float32),
+        "mask": torch.tensor(mask, dtype=torch.float32) if mask is not None else None,
         "poseTarget": str(pose_target or "neutral-a"),
         "sourceFile": str(frame.get("sourceFile") or frame.get("file") or "frame"),
+        "sourceType": str(frame.get("sourceType") or "keyframe"),
         "state": str(frame.get("state") or "unknown"),
         "width": float(width),
+        "worldKeypoints": world_keypoints,
         "yawDeg": float(frame.get("yawDeg") or 0),
     }
 
@@ -440,7 +603,7 @@ def build_keypoint_targets(
     frames: list[dict[str, Any]],
     torch: Any,
 ) -> tuple[Any, Any, Any]:
-    names = list(MOVENET_TO_SMPLX)
+    names = list(POSE_TO_SMPLX)
     targets = torch.zeros((len(frames), len(names), 2), dtype=torch.float32)
     weights = torch.zeros((len(frames), len(names)), dtype=torch.float32)
     for frame_index, frame in enumerate(frames):
@@ -458,8 +621,38 @@ def build_keypoint_targets(
             targets[frame_index, point_index, 0] = 2 * float(x) / frame["width"] - 1
             targets[frame_index, point_index, 1] = 2 * float(y) / frame["height"] - 1
             weights[frame_index, point_index] = min(1.0, max(0.0, float(score))) ** 2
-    indices = torch.tensor([MOVENET_TO_SMPLX[name] for name in names], dtype=torch.long)
+    indices = torch.tensor([POSE_TO_SMPLX[name] for name in names], dtype=torch.long)
     return targets, weights, indices
+
+
+def build_world_targets(
+    frames: list[dict[str, Any]],
+    torch: Any,
+) -> tuple[Any, Any]:
+    names = list(POSE_TO_SMPLX)
+    targets = torch.zeros((len(frames), len(names), 3), dtype=torch.float32)
+    weights = torch.zeros((len(frames), len(names)), dtype=torch.float32)
+
+    for frame_index, frame in enumerate(frames):
+        for point_index, name in enumerate(names):
+            point = frame["worldKeypoints"].get(name)
+            if not isinstance(point, dict):
+                continue
+            score = point.get("score")
+            x = point.get("x")
+            y = point.get("y")
+            z = point.get("z")
+            if not all(isinstance(value, (int, float)) for value in [score, x, y, z]):
+                continue
+            if float(score) < 0.2:
+                continue
+            targets[frame_index, point_index] = torch.tensor(
+                [float(x), float(y), float(z)],
+                dtype=torch.float32,
+            )
+            weights[frame_index, point_index] = min(1.0, max(0.0, float(score))) ** 2
+
+    return targets, weights
 
 
 def build_target_masks(
@@ -472,6 +665,9 @@ def build_target_masks(
 
     masks = []
     for frame in frames:
+        if frame["mask"] is None:
+            masks.append(torch.zeros((render_height, render_width), dtype=torch.float32))
+            continue
         resized = functional.interpolate(
             frame["mask"][None, None],
             size=(render_height, render_width),
@@ -491,15 +687,37 @@ def initialize_cameras(
     camera_xy = torch.zeros((len(frames), 2), dtype=torch.float32)
     depths = torch.zeros((len(frames),), dtype=torch.float32)
     for index, frame in enumerate(frames):
-        bounds = binary_mask_bounds(frame["mask"])
-        if bounds is None:
+        mask = frame["mask"]
+        bounds = binary_mask_bounds(mask) if mask is not None else None
+        if bounds is not None and mask is not None:
+            left, top, right, bottom = bounds
+            mask_height, mask_width = mask.shape
+            target_center_x = ((left + right + 1) / (2 * mask_width)) * 2 - 1
+            target_center_y = ((top + bottom + 1) / (2 * mask_height)) * 2 - 1
+            observed_height_px = max(
+                1.0,
+                (bottom - top + 1) / mask_height * frame["height"],
+            )
+        else:
+            visible = [
+                point
+                for name, point in frame["keypoints"].items()
+                if name in POSE_TO_SMPLX
+                and isinstance(point.get("score"), (int, float))
+                and float(point["score"]) >= 0.25
+            ]
+            if len(visible) < 4:
+                depths[index] = 2.5
+                continue
+            xs = [float(point["x"]) for point in visible]
+            ys = [float(point["y"]) for point in visible]
+            target_center_x = ((min(xs) + max(xs)) / (2 * frame["width"])) * 2 - 1
+            target_center_y = ((min(ys) + max(ys)) / (2 * frame["height"])) * 2 - 1
+            observed_height_px = max(1.0, max(ys) - min(ys))
+
+        if observed_height_px <= 1:
             depths[index] = 2.5
             continue
-        left, top, right, bottom = bounds
-        mask_height, mask_width = frame["mask"].shape
-        target_center_x = ((left + right + 1) / (2 * mask_width)) * 2 - 1
-        target_center_y = ((top + bottom + 1) / (2 * mask_height)) * 2 - 1
-        observed_height_px = max(1.0, (bottom - top + 1) / mask_height * frame["height"])
         model_height = float(vertices[index, :, 1].max() - vertices[index, :, 1].min())
         depth = min(8.0, max(0.7, focal_px * model_height / observed_height_px))
         model_center_x = float((vertices[index, :, 0].max() + vertices[index, :, 0].min()) / 2)
@@ -574,16 +792,22 @@ def calculate_objective(
     ).square()
     beta_anchor = (context["betas"] - context["initialBetas"]).square().mean()
     beta_prior = context["betas"].square().mean()
-    geometry_indices = context["geometryIndices"]
-    geometry_depths = context["logDepth"][geometry_indices]
-    depth_consistency = geometry_depths.var(unbiased=False) if len(geometry_indices) > 1 else geometry_depths.sum() * 0
-    temporal_pose = temporal_pose_loss(context["bodyPose"], geometry_indices, torch)
-    temporal_yaw = temporal_scalar_loss(context["yawDelta"], geometry_indices)
+    temporal_indices = context["temporalIndices"]
+    temporal_depths = context["logDepth"][temporal_indices]
+    depth_consistency = temporal_depths.var(unbiased=False) if len(temporal_indices) > 1 else temporal_depths.sum() * 0
+    temporal_pose = temporal_pose_loss(context["bodyPose"], temporal_indices, torch)
+    temporal_yaw = temporal_scalar_loss(context["yawDelta"], temporal_indices)
+    world_pose = pairwise_world_pose_loss(
+        output.joints[:, context["jointIndices"]],
+        context["targetWorld"],
+        context["worldWeights"],
+        torch,
+    )
     silhouette_loss = keypoint_loss * 0
 
-    if silhouette_weight > 0:
+    if silhouette_weight > 0 and context["silhouetteIndices"]:
         rendered = render_soft_silhouettes(output.vertices, context)
-        targets = context["targetMasks"][geometry_indices]
+        targets = context["targetMasks"][context["silhouetteIndices"]]
         silhouette_loss = soft_dice_loss(rendered, targets, torch)
 
     total = (
@@ -592,6 +816,7 @@ def calculate_objective(
         + 0.018 * pose_prior
         + 0.035 * temporal_pose
         + 0.11 * temporal_yaw
+        + 0.07 * world_pose
         + 0.05 * yaw_prior
         + 0.08 * camera_rotation_prior
         + 0.018 * focal_prior
@@ -610,6 +835,7 @@ def calculate_objective(
         "temporalPose": temporal_pose,
         "temporalYaw": temporal_yaw,
         "total": total,
+        "worldPose": world_pose,
         "yawPrior": yaw_prior,
     }
 
@@ -648,16 +874,16 @@ def camera_rotation_matrix(pitch_roll: Any, torch: Any) -> Any:
 
 def render_soft_silhouettes(vertices: Any, context: dict[str, Any]) -> Any:
     torch = context["torch"]
-    geometry_indices = context["geometryIndices"]
-    geometry_vertices = vertices[geometry_indices]
+    silhouette_indices = context["silhouetteIndices"]
+    geometry_vertices = vertices[silhouette_indices]
     face_indices = context["surfaceFaceIndices"]
     surface_points = geometry_vertices[:, face_indices].mean(dim=2)
     geometry_context = {
         **context,
-        "cameraXy": context["cameraXy"][geometry_indices],
-        "heights": context["heights"][geometry_indices],
-        "logDepth": context["logDepth"][geometry_indices],
-        "widths": context["widths"][geometry_indices],
+        "cameraXy": context["cameraXy"][silhouette_indices],
+        "heights": context["heights"][silhouette_indices],
+        "logDepth": context["logDepth"][silhouette_indices],
+        "widths": context["widths"][silhouette_indices],
     }
     projected = project_points(surface_points, geometry_context)
     render_height = context["renderHeight"]
@@ -712,6 +938,45 @@ def temporal_scalar_loss(values: Any, geometry_indices: list[int]) -> Any:
     return (geometry_values[1:] - geometry_values[:-1]).square().mean()
 
 
+def pairwise_world_pose_loss(
+    predicted: Any,
+    target: Any,
+    weights: Any,
+    torch: Any,
+) -> Any:
+    if float(weights.sum().detach()) <= 0:
+        return predicted.sum() * 0
+
+    pair_weights = weights[:, :, None] * weights[:, None, :]
+    triangle = torch.triu(
+        torch.ones((weights.shape[1], weights.shape[1]), dtype=torch.float32),
+        diagonal=1,
+    )
+    pair_weights = pair_weights * triangle[None]
+    valid_pairs = pair_weights.sum(dim=(1, 2))
+    valid_frames = valid_pairs > 8
+
+    if not bool(valid_frames.any()):
+        return predicted.sum() * 0
+
+    predicted_distances = torch.cdist(predicted, predicted)
+    target_distances = torch.cdist(target, target)
+    predicted_scale = (
+        (predicted_distances * pair_weights).sum(dim=(1, 2)) /
+        valid_pairs.clamp_min(1.0)
+    ).clamp_min(1e-4)
+    target_scale = (
+        (target_distances * pair_weights).sum(dim=(1, 2)) /
+        valid_pairs.clamp_min(1.0)
+    ).clamp_min(1e-4)
+    residual = (
+        predicted_distances / predicted_scale[:, None, None] -
+        target_distances / target_scale[:, None, None]
+    )
+    error = robust_huber(residual, 0.08, torch) * pair_weights
+    return error[valid_frames].sum() / pair_weights[valid_frames].sum().clamp_min(1.0)
+
+
 def robust_huber(residual: Any, delta: float, torch: Any) -> Any:
     absolute = torch.abs(residual)
     return torch.where(
@@ -757,9 +1022,17 @@ def evaluate_fit(context: dict[str, Any], *, include_silhouette: bool) -> dict[s
             "landmarkRmsePx": round(float(rmse), 3),
             "meanDepthM": round(float(torch.exp(context["logDepth"]).mean()), 5),
         }
-        if include_silhouette:
+        world_pose = pairwise_world_pose_loss(
+            output.joints[:, context["jointIndices"]],
+            context["targetWorld"],
+            context["worldWeights"],
+            torch,
+        )
+        if float(context["worldWeights"].sum()) > 0:
+            result["normalizedWorldPoseError"] = round(float(world_pose), 6)
+        if include_silhouette and context["silhouetteIndices"]:
             rendered = render_soft_silhouettes(output.vertices, context)
-            targets = context["targetMasks"][context["geometryIndices"]]
+            targets = context["targetMasks"][context["silhouetteIndices"]]
             dice = 1 - soft_dice_loss(rendered, targets, torch)
             result["meanSoftSilhouetteDice"] = round(float(dice), 6)
         return result
@@ -780,12 +1053,13 @@ def build_frame_results(
             return_verts=True,
         )
         projected = project_points(output.joints[:, context["jointIndices"]], context)
-        rendered = render_soft_silhouettes(output.vertices, context)
         geometry_dice = {}
-        for local_index, frame_index in enumerate(context["geometryIndices"]):
-            target = context["targetMasks"][frame_index:frame_index + 1]
-            prediction = rendered[local_index:local_index + 1]
-            geometry_dice[frame_index] = float(1 - soft_dice_loss(prediction, target, torch))
+        if context["silhouetteIndices"]:
+            rendered = render_soft_silhouettes(output.vertices, context)
+            for local_index, frame_index in enumerate(context["silhouetteIndices"]):
+                target = context["targetMasks"][frame_index:frame_index + 1]
+                prediction = rendered[local_index:local_index + 1]
+                geometry_dice[frame_index] = float(1 - soft_dice_loss(prediction, target, torch))
 
         results = []
         for index, frame in enumerate(frames):
@@ -806,9 +1080,11 @@ def build_frame_results(
                 "landmarkRmsePx": round(float(rmse), 3),
                 "softSilhouetteDice": round(geometry_dice[index], 6) if index in geometry_dice else None,
                 "sourceFile": frame["sourceFile"],
+                "sourceType": frame["sourceType"],
                 "state": frame["state"],
                 "width": round(frame["width"]),
                 "yawDeg": round(frame["yawDeg"], 3),
+                "worldKeypointCount": len(frame["worldKeypoints"]),
                 "yawCorrectionDeg": round(
                     math.degrees(float(context["yawDelta"][index])),
                     3,

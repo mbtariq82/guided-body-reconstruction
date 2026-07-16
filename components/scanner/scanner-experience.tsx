@@ -6,13 +6,15 @@ import { FinishScreen } from "@/components/screens/finish-screen";
 import { PrimaryButton } from "@/components/ui/primary-button";
 import { useMockGuidance } from "@/hooks/use-mock-guidance";
 import { usePersonSegmentation } from "@/hooks/use-person-segmentation";
-import { usePoseQuality } from "@/hooks/use-pose-quality";
+import { poseTrackSampleIntervalMs, usePoseQuality } from "@/hooks/use-pose-quality";
 import { useScanPhaseTimer } from "@/hooks/use-scan-phase-timer";
 import { getNextScanState, SCAN_STEPS } from "@/lib/scan-machine";
+import { getCapturedFrameReconstruction } from "@/lib/reconstruction-profile";
 import { getCaptureGate } from "@/services/capture-gate-service";
 import type { CameraFacingMode } from "@/services/camera-service";
 import type {
   CapturedPersonSegmentation,
+  CapturedTemporalPoseFrame,
   CaptureSessionSummary,
   CaptureUploadState,
   CapturedFrameVision,
@@ -94,6 +96,7 @@ export function ScannerExperience({
   const videoCaptureTimestampRef = useRef("");
   const videoCaptureSessionIdRef = useRef("");
   const videoPhaseTimelineRef = useRef<CapturedScanVideo["phaseTimeline"]>([]);
+  const poseTrackFramesRef = useRef<CapturedTemporalPoseFrame[]>([]);
   const autoStartTriggeredRef = useRef(false);
   const [autoStartProgress, setAutoStartProgress] = useState(0);
   const [voiceGuidanceEnabled, setVoiceGuidanceEnabled] = useState(true);
@@ -192,9 +195,11 @@ export function ScannerExperience({
         startScanVideoCapture({
           onCaptureVideo,
           onVideoStatusChange,
+          poseTrackFramesRef,
           recorderRef: videoRecorderRef,
           chunksRef: videoChunksRef,
           phaseTimelineRef: videoPhaseTimelineRef,
+          sessionStartedAt: captureSummary.startedAt,
           sessionId: captureSummary.id,
           sessionIdRef: videoCaptureSessionIdRef,
           startedAtRef: videoCaptureStartedAtRef,
@@ -222,6 +227,7 @@ export function ScannerExperience({
     }
   }, [
     captureSummary.id,
+    captureSummary.startedAt,
     captureSummary.videoStatus,
     onCaptureVideo,
     onVideoStatusChange,
@@ -229,6 +235,54 @@ export function ScannerExperience({
     step.capturesData,
     stream,
     useMockCamera,
+  ]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+
+    if (
+      captureSummary.videoStatus !== "recording" ||
+      !step.capturesData ||
+      !video ||
+      video.videoWidth <= 0 ||
+      video.videoHeight <= 0 ||
+      poseQuality.status !== "running" ||
+      poseQuality.keypoints.length < 20 ||
+      poseQuality.worldKeypoints.length < 20
+    ) {
+      return;
+    }
+
+    const elapsedMs = Math.max(0, performance.now() - videoCaptureStartedAtRef.current);
+    const previousFrame = poseTrackFramesRef.current.at(-1);
+
+    if (
+      previousFrame &&
+      elapsedMs - previousFrame.elapsedMs < poseTrackSampleIntervalMs * 0.72
+    ) {
+      return;
+    }
+
+    const reconstruction = getCapturedFrameReconstruction(scanState, 0, phaseProgress);
+    poseTrackFramesRef.current.push({
+      elapsedMs: Math.round(elapsedMs),
+      height: video.videoHeight,
+      keypoints: poseQuality.keypoints,
+      phaseProgress: Math.round(phaseProgress),
+      state: scanState,
+      width: video.videoWidth,
+      worldKeypoints: poseQuality.worldKeypoints,
+      yawDeg: reconstruction?.yawDeg ?? null,
+    });
+  }, [
+    captureSummary.videoStatus,
+    phaseProgress,
+    poseQuality.keypoints,
+    poseQuality.lastUpdatedAt,
+    poseQuality.status,
+    poseQuality.worldKeypoints,
+    scanState,
+    step.capturesData,
   ]);
 
   useEffect(() => {
@@ -551,9 +605,11 @@ type StartScanVideoCaptureInput = {
   onCaptureVideo: (video: CapturedScanVideo) => void;
   onVideoStatusChange: (status: CaptureVideoStatus) => void;
   phaseTimelineRef: React.MutableRefObject<CapturedScanVideo["phaseTimeline"]>;
+  poseTrackFramesRef: React.MutableRefObject<CapturedTemporalPoseFrame[]>;
   recorderRef: React.MutableRefObject<MediaRecorder | null>;
   sessionId: string;
   sessionIdRef: React.MutableRefObject<string>;
+  sessionStartedAt: string;
   startedAtRef: React.MutableRefObject<number>;
   stream: MediaStream;
   timestampRef: React.MutableRefObject<string>;
@@ -565,9 +621,11 @@ function startScanVideoCapture({
   onCaptureVideo,
   onVideoStatusChange,
   phaseTimelineRef,
+  poseTrackFramesRef,
   recorderRef,
   sessionId,
   sessionIdRef,
+  sessionStartedAt,
   startedAtRef,
   stream,
   timestampRef,
@@ -588,6 +646,7 @@ function startScanVideoCapture({
 
     chunksRef.current = [];
     phaseTimelineRef.current = [{ elapsedMs: 0, state: initialState }];
+    poseTrackFramesRef.current = [];
     recorderRef.current = recorder;
     sessionIdRef.current = sessionId;
     startedAtRef.current = performance.now();
@@ -605,6 +664,8 @@ function startScanVideoCapture({
       const durationMs = Math.max(0, Math.round(performance.now() - startedAtRef.current));
       const resolvedMimeType = recorder.mimeType || mimeType || "video/webm";
       const blob = new Blob(chunksRef.current, { type: resolvedMimeType });
+      const completedAt = Date.now();
+      const poseFrames = [...poseTrackFramesRef.current];
 
       recorderRef.current = null;
       if (blob.size === 0) {
@@ -623,10 +684,25 @@ function startScanVideoCapture({
         },
         capturedAt: timestampRef.current,
         durationMs,
-        fileName: `guided-scan-${Date.now()}.${getVideoFileExtension(resolvedMimeType)}`,
-        id: `video-${sessionIdRef.current}-${Date.now()}`,
+        fileName: `guided-scan-${completedAt}.${getVideoFileExtension(resolvedMimeType)}`,
+        id: `video-${sessionIdRef.current}-${completedAt}`,
         mimeType: resolvedMimeType,
         phaseTimeline: [...phaseTimelineRef.current],
+        poseTrack: poseFrames.length > 0
+          ? {
+              capturedAt: timestampRef.current,
+              fileName: `guided-pose-track-${completedAt}.json`,
+              frameCount: poseFrames.length,
+              frames: poseFrames,
+              provider: "mediapipe-blazepose",
+              sampleIntervalTargetMs: poseTrackSampleIntervalMs,
+              schemaVersion: "guided-pose-track.v1",
+              sessionElapsedOffsetMs: Math.max(
+                0,
+                Date.parse(timestampRef.current) - Date.parse(sessionStartedAt),
+              ),
+            }
+          : null,
         sessionId: sessionIdRef.current,
         sizeBytes: blob.size,
       });
@@ -700,11 +776,12 @@ function getCapturedFrameVision(
     bodyBounds: poseQuality.bodyBounds,
     keypoints: poseQuality.keypoints,
     provider: segmentation
-      ? "tensorflow-movenet+mediapipe-selfie-segmentation"
-      : "tensorflow-movenet",
+      ? "mediapipe-blazepose+mediapipe-selfie-segmentation"
+      : "mediapipe-blazepose",
     segmentation,
     status: poseQuality.status,
     updatedAt: poseQuality.lastUpdatedAt,
+    worldKeypoints: poseQuality.worldKeypoints,
   };
 }
 

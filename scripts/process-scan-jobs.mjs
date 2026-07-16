@@ -588,6 +588,28 @@ function validateManifest(files, manifest, checks) {
         ? `${videos.length} video clip${videos.length === 1 ? "" : "s"} with phase timing.`
         : `${missingVideoFiles.length} missing files; ${invalidVideoMetadata.length} invalid metadata records.`,
     );
+
+    const poseTrackResults = videos
+      .filter((video) => video?.poseTrack)
+      .map((video) => validatePoseTrack(files, video.poseTrack));
+
+    if (poseTrackResults.length > 0) {
+      const invalidPoseTracks = poseTrackResults.filter((result) => !result.valid);
+      const trackedFrames = poseTrackResults.reduce(
+        (total, result) => total + result.frameCount,
+        0,
+      );
+
+      addCheck(
+        checks,
+        "dense-pose-track",
+        "Dense temporal pose track is valid",
+        invalidPoseTracks.length === 0 ? "passed" : "failed",
+        invalidPoseTracks.length === 0
+          ? `${trackedFrames} synchronized BlazePose observations.`
+          : invalidPoseTracks.map((result) => result.reason).join(" "),
+      );
+    }
   }
 
   const framesWithInvalidDimensions = frames.filter(
@@ -642,6 +664,54 @@ function validateManifest(files, manifest, checks) {
       "failed",
       "Manifest review was not export ready.",
     );
+  }
+}
+
+function validatePoseTrack(files, metadata) {
+  if (
+    metadata?.schemaVersion !== "guided-pose-track.v1" ||
+    typeof metadata.fileName !== "string"
+  ) {
+    return { frameCount: 0, reason: "Pose track metadata is invalid.", valid: false };
+  }
+
+  const bytes = files[`tracks/${metadata.fileName}`];
+
+  if (!bytes) {
+    return { frameCount: 0, reason: `${metadata.fileName} is missing.`, valid: false };
+  }
+
+  try {
+    const track = JSON.parse(strFromU8(bytes));
+    const frames = Array.isArray(track.frames) ? track.frames : [];
+    const validFrames = frames.filter(
+      (frame) =>
+        Number.isFinite(frame?.elapsedMs) &&
+        Number.isFinite(frame?.width) &&
+        Number.isFinite(frame?.height) &&
+        Array.isArray(frame?.keypoints) &&
+        frame.keypoints.length >= 20 &&
+        Array.isArray(frame?.worldKeypoints) &&
+        frame.worldKeypoints.length >= 20,
+    );
+
+    if (
+      track.schemaVersion !== "guided-pose-track.v1" ||
+      !Number.isFinite(track.sessionElapsedOffsetMs) ||
+      validFrames.length !== frames.length ||
+      frames.length === 0 ||
+      Number(metadata.frameCount) !== frames.length
+    ) {
+      return {
+        frameCount: validFrames.length,
+        reason: `${metadata.fileName} contains invalid or inconsistent observations.`,
+        valid: false,
+      };
+    }
+
+    return { frameCount: frames.length, reason: "", valid: true };
+  } catch {
+    return { frameCount: 0, reason: `${metadata.fileName} is not valid JSON.`, valid: false };
   }
 }
 

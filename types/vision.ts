@@ -2,6 +2,7 @@ import type {
   CapturedBodyBounds,
   CapturedPersonSegmentation,
   CapturedPoseKeypoint,
+  CapturedPoseWorldKeypoint,
   ScanMetric,
   ScanState,
 } from "@/types/scan";
@@ -29,8 +30,10 @@ export type PoseQualityResult = {
   keypoints: CapturedPoseKeypoint[];
   lastUpdatedAt: number | null;
   metrics: ScanMetric[];
+  provider: "mediapipe-blazepose";
   scanState: ScanState;
   status: VisionRuntimeStatus;
+  worldKeypoints: CapturedPoseWorldKeypoint[];
 };
 
 export type PersonSegmentationResult = {

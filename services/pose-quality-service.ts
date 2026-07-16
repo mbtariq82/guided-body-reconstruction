@@ -3,6 +3,7 @@ import { SCAN_STEPS } from "@/lib/scan-machine";
 import type {
   CapturedBodyBounds,
   CapturedPoseKeypoint,
+  CapturedPoseWorldKeypoint,
   ScanMetric,
   ScanState,
 } from "@/types/scan";
@@ -43,7 +44,7 @@ export function buildPoseQualityResult({
   const metrics: ScanMetric[] = [
     {
       label: "CV Engine",
-      value: backend ? "MoveNet" : "Starting",
+      value: backend ? "BlazePose 33" : "Starting",
       tone: backend ? "good" : "neutral",
     },
   ];
@@ -73,8 +74,10 @@ export function buildPoseQualityResult({
       keypoints: [],
       lastUpdatedAt: Date.now(),
       metrics,
+      provider: "mediapipe-blazepose",
       scanState,
       status: "running",
+      worldKeypoints: [],
     };
   }
 
@@ -104,8 +107,10 @@ export function buildPoseQualityResult({
     keypoints: pose.keypoints.map(toCapturedKeypoint),
     lastUpdatedAt: Date.now(),
     metrics,
+    provider: "mediapipe-blazepose",
     scanState,
     status: "running",
+    worldKeypoints: (pose.keypoints3D ?? []).map(toCapturedWorldKeypoint),
   };
 }
 
@@ -126,8 +131,10 @@ export function getPoseLoadingResult(
       { label: "Body", value: "Checking", tone: "neutral" },
       { label: "Distance", value: "Checking", tone: "neutral" },
     ],
+    provider: "mediapipe-blazepose",
     scanState,
     status: "loading",
+    worldKeypoints: [],
   };
 }
 
@@ -147,8 +154,10 @@ export function getPoseErrorResult(
       { label: "Body", value: "Manual Review", tone: "neutral" },
       { label: "Reason", value: message.slice(0, 28), tone: "neutral" },
     ],
+    provider: "mediapipe-blazepose",
     scanState,
     status: "error",
+    worldKeypoints: [],
   };
 }
 
@@ -166,6 +175,17 @@ function toCapturedKeypoint(keypoint: Keypoint): CapturedPoseKeypoint {
     score: typeof keypoint.score === "number" ? Number(keypoint.score.toFixed(4)) : null,
     x: Number(keypoint.x.toFixed(2)),
     y: Number(keypoint.y.toFixed(2)),
+    z: typeof keypoint.z === "number" ? Number(keypoint.z.toFixed(5)) : null,
+  };
+}
+
+function toCapturedWorldKeypoint(keypoint: Keypoint): CapturedPoseWorldKeypoint {
+  return {
+    name: keypoint.name ?? "",
+    score: typeof keypoint.score === "number" ? Number(keypoint.score.toFixed(4)) : null,
+    x: Number(keypoint.x.toFixed(5)),
+    y: Number(keypoint.y.toFixed(5)),
+    z: Number((keypoint.z ?? 0).toFixed(5)),
   };
 }
 

@@ -10,14 +10,18 @@ The CPU implementation is deliberately dependency-light. It is a reproducible re
 
 ## Selected Evidence
 
-The refiner selects up to 14 quality-approved full-body frames. It balances neutral geometry frames by estimated yaw and time, then adds the best available T-pose, overhead Y-pose, wide-stance, and controlled-motion frames. Face and hand close-ups are excluded because they do not share the full-body camera framing.
+Legacy scans use up to 14 quality-approved full-body frames. New scans use an adaptive 18-frame budget that mixes yaw-balanced mask-bearing JPEGs with representative observations from the synchronized pose track, then adds the best available T-pose, overhead Y-pose, wide-stance, and controlled-motion frames. Face and hand close-ups are excluded because they do not share the full-body camera framing.
+
+The pose track stores the video's offset from the session start. The fitter applies that offset before ordering track samples with JPEG keyframes, giving temporal priors one shared timeline.
 
 Every selected frame must contain:
 
 - Image dimensions.
-- A valid person mask.
-- Usable MoveNet landmarks with confidence scores.
+- A valid person mask for silhouette-bearing keyframes, or a validated dense-track source.
+- Usable 2D landmarks with confidence scores.
 - Capture state, timestamp, and estimated yaw.
+
+New track observations can additionally contain BlazePose world landmarks. Heel, toe, thumb, index, and little-finger points map onto SMPL-X auxiliary joints. A normalized pairwise-distance loss constrains 3D articulated structure without treating learned world coordinates as calibrated body measurements.
 
 Older requests without explicit image dimensions remain usable because the fitter reads dimensions from the JPEG header.
 
@@ -44,6 +48,7 @@ Optimisation runs in three stages so camera errors are not immediately absorbed 
 The combined loss contains:
 
 - Confidence-weighted robust 2D joint reprojection.
+- Scale- and translation-invariant world-pose structure from BlazePose tracks.
 - Differentiable soft-Dice loss against the complete person mask.
 - Pose-deviation and temporal pose priors.
 - Temporal yaw and absolute yaw-correction priors.
@@ -61,6 +66,7 @@ The silhouette renderer samples deterministic SMPL-X triangle centroids, project
 - Shared camera parameters and focal-to-image-height ratio.
 - Initial and final shape betas.
 - Every selected frame, its source role, optimized yaw, pose, translation, depth, RMSE, and silhouette Dice.
+- Dense-track frame count, world-landmark coverage, and normalized world-pose residuals.
 - Per-stage loss terms and optimization settings.
 
 The final neutral A-pose GLB is regenerated from the refined shared betas. If the temporal stage is disabled, receives insufficient evidence, or throws an exception, the worker preserves the preceding measurement-based result and writes the skip or failure reason into diagnostics.
@@ -68,13 +74,13 @@ The final neutral A-pose GLB is regenerated from the refined shared betas. If th
 ## Runtime Controls
 
 - `SMPLX_TEMPORAL_ENABLE=0` disables the refiner.
-- `SMPLX_TEMPORAL_MAX_FRAMES` controls the selected-frame cap, from 4 to 20.
+- `SMPLX_TEMPORAL_MAX_FRAMES` controls the selected-frame cap, from 4 to 24.
 - `SMPLX_CAMERA_ITERATIONS`, `SMPLX_POSE_ITERATIONS`, and `SMPLX_SILHOUETTE_ITERATIONS` control optimization work.
 - `SMPLX_RENDER_HEIGHT` controls soft-mask resolution.
 - `SMPLX_SURFACE_POINT_COUNT` controls sampled surface density.
 - `SMPLX_SPLAT_SIGMA_PX` controls point-splat radius.
 
-The default 14-frame CPU configuration takes roughly half a minute on the current Apple Silicon development machine. This should be re-benchmarked per hardware and pipeline revision.
+The default legacy 14-frame CPU configuration takes roughly half a minute on the current Apple Silicon development machine. Dense-track scans default to 18 selected observations. This should be re-benchmarked per hardware and pipeline revision.
 
 ## Research Basis
 
@@ -84,8 +90,9 @@ The default 14-frame CPU configuration takes roughly half a minute on the curren
 
 ## Known Limits
 
-- MoveNet supplies only 17 sparse landmarks and no reliable toe, heel, finger, or dense facial constraints.
-- The browser sequence stores selected JPEG observations; the worker does not yet decode and track all continuous-video frames.
+- BlazePose supplies useful heels, toes, and coarse hand points but not dense facial contours or fully articulated fingers.
+- The browser samples a synchronized track at a target interval of 180 ms; it does not preserve every 30 fps video frame as a landmark observation.
+- Learned world landmarks constrain relative pose but are not calibrated metric depth or body shape.
 - Clothing and hair are included in person masks but are not represented by naked-body SMPL-X, so silhouette pressure can bias shape outward.
 - Principal point and lens distortion are not calibrated.
 - Back-view left-right ambiguity is regularized, not fully resolved by the sparse landmarks.

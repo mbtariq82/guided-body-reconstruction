@@ -18,7 +18,7 @@ type UsePoseQualityOptions = {
   videoRef: RefObject<HTMLVideoElement | null>;
 };
 
-const sampleIntervalMs = 850;
+export const poseTrackSampleIntervalMs = 180;
 
 export function usePoseQuality({
   active,
@@ -29,6 +29,8 @@ export function usePoseQuality({
   const backendRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const isEstimatingRef = useRef(false);
+  const scanStateRef = useRef(scanState);
+  scanStateRef.current = scanState;
   const [quality, setQuality] = useState<PoseQualityResult>(() =>
     getPoseLoadingResult(scanState, null),
   );
@@ -40,48 +42,36 @@ export function usePoseQuality({
 
     let isCancelled = false;
     isLoadingRef.current = true;
-    setQuality(getPoseLoadingResult(scanState, backendRef.current));
+    setQuality(getPoseLoadingResult(scanStateRef.current, backendRef.current));
 
     async function loadDetector() {
       try {
-        const [tf, moveNetDetector, moveNetConstants] = await Promise.all([
-          import("@tensorflow/tfjs-core"),
-          import("@tensorflow-models/pose-detection/dist/movenet/detector"),
-          import("@tensorflow-models/pose-detection/dist/movenet/constants"),
-          import("@tensorflow/tfjs-backend-webgl"),
-          import("@tensorflow/tfjs-backend-cpu"),
-        ]).then(
-          ([tfModule, detectorModule, constantsModule]) =>
-            [tfModule, detectorModule, constantsModule] as const,
+        const blazePoseDetector = await import(
+          "@tensorflow-models/pose-detection/dist/blazepose_mediapipe/detector"
         );
 
-        try {
-          await tf.setBackend("webgl");
-        } catch {
-          await tf.setBackend("cpu");
-        }
-
-        await tf.ready();
+        const detector = await blazePoseDetector.load({
+          enableSmoothing: true,
+          enableSegmentation: false,
+          modelType: "full",
+          runtime: "mediapipe",
+          smoothSegmentation: false,
+          solutionPath: "/api/vision-assets/pose",
+        });
 
         if (isCancelled) {
+          detector.dispose();
           return;
         }
 
-        backendRef.current = tf.getBackend();
-        detectorRef.current = await moveNetDetector.load({
-          enableSmoothing: true,
-          minPoseScore: 0.18,
-          modelType: moveNetConstants.SINGLEPOSE_THUNDER,
-        });
-
-        if (!isCancelled) {
-          setQuality(getPoseLoadingResult(scanState, backendRef.current));
-        }
+        backendRef.current = "mediapipe-wasm";
+        detectorRef.current = detector;
+        setQuality(getPoseLoadingResult(scanStateRef.current, backendRef.current));
       } catch (error) {
         if (!isCancelled) {
           setQuality(
             getPoseErrorResult(
-              scanState,
+              scanStateRef.current,
               error instanceof Error ? error.message : "Model load failed",
             ),
           );
@@ -96,7 +86,7 @@ export function usePoseQuality({
     return () => {
       isCancelled = true;
     };
-  }, [active, scanState]);
+  }, [active]);
 
   useEffect(() => {
     if (!active) {
@@ -127,9 +117,11 @@ export function usePoseQuality({
       try {
         const frameQuality = analyzeVideoFrameQuality(video);
         const poses = await detector.estimatePoses(video, {
-          flipHorizontal: true,
+          // Captured JPEGs and video frames use the raw sensor orientation.
+          // CSS mirroring of the preview must not alter stored landmark coordinates.
+          flipHorizontal: false,
           maxPoses: 1,
-        });
+        }, performance.now());
 
         setQuality(
           buildPoseQualityResult({
@@ -156,7 +148,7 @@ export function usePoseQuality({
     void estimate();
     const timer = window.setInterval(() => {
       void estimate();
-    }, sampleIntervalMs);
+    }, poseTrackSampleIntervalMs);
 
     return () => window.clearInterval(timer);
   }, [active, scanState, videoRef]);

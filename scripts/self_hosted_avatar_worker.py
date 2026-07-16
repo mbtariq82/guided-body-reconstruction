@@ -137,6 +137,12 @@ def validate_inputs(request: dict[str, Any]) -> dict[str, Any]:
     video_path = resolve_workspace_path(
         video_metadata.get("file") if isinstance(video_metadata, dict) else None
     )
+    pose_track_metadata = (
+        input_sequence.get("poseTrack") if isinstance(input_sequence, dict) else None
+    )
+    pose_track_path = resolve_workspace_path(
+        pose_track_metadata.get("file") if isinstance(pose_track_metadata, dict) else None
+    )
 
     local_avatar_path = resolve_workspace_path(request.get("localAvatarReportFile"))
     measurement_path = resolve_workspace_path(request.get("measurementReportFile"))
@@ -154,6 +160,15 @@ def validate_inputs(request: dict[str, Any]) -> dict[str, Any]:
         "temporalVideo": {
             "exists": bool(video_path and video_path.exists()),
             "path": str(video_path) if video_path else None,
+        },
+        "temporalPoseTrack": {
+            "exists": bool(pose_track_path and pose_track_path.exists()),
+            "frameCount": (
+                int(pose_track_metadata.get("frameCount") or 0)
+                if isinstance(pose_track_metadata, dict)
+                else 0
+            ),
+            "path": str(pose_track_path) if pose_track_path else None,
         },
         "localAvatarReport": {
             "exists": bool(local_avatar_path and local_avatar_path.exists()),

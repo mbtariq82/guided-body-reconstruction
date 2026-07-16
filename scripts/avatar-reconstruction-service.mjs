@@ -225,6 +225,9 @@ function buildPreparedJob({
         side: selectedFrames.side?.fileName ?? null,
       },
       videoFile: request.videoFile ? relativeToWorkspace(request.videoFile) : null,
+      poseTrackFile: request.poseTrackFile
+        ? relativeToWorkspace(request.poseTrackFile)
+        : null,
     },
     logs: {
       stderr: [],
@@ -274,6 +277,7 @@ async function writeSelfHostedRequest({
   );
   const frameSequence = await writeFrameSequence(directories.inputDirectory, detail.frames);
   const videoFile = await writeGuidedScanVideo(directories.inputDirectory, detail);
+  const poseTrackFile = await writeGuidedPoseTrack(directories.inputDirectory, detail);
   const measurementReportFile = detail.measurementReport
     ? path.join(directories.inputDirectory, "body-measurements.json")
     : null;
@@ -326,6 +330,12 @@ async function writeSelfHostedRequest({
             file: relativeToWorkspace(videoFile.file),
           }
         : null,
+      poseTrack: poseTrackFile
+        ? {
+            ...poseTrackFile.metadata,
+            file: relativeToWorkspace(poseTrackFile.file),
+          }
+        : null,
     },
     localAvatarReportFile: avatarReportFile ? relativeToWorkspace(avatarReportFile) : null,
     measurementReportFile: measurementReportFile ? relativeToWorkspace(measurementReportFile) : null,
@@ -359,6 +369,7 @@ async function writeSelfHostedRequest({
     measurementReportFile,
     referenceViewCount: referenceViews.length,
     requestFile,
+    poseTrackFile: poseTrackFile?.file ?? null,
     videoFile: videoFile?.file ?? null,
   };
 }
@@ -464,6 +475,43 @@ async function writeGuidedScanVideo(inputDirectory, detail) {
     return {
       file: filePath,
       metadata: video,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeGuidedPoseTrack(inputDirectory, detail) {
+  const video = Array.isArray(detail.videos) ? detail.videos[0] : null;
+  const track = video?.poseTrack;
+  const archiveFile = detail.session?.archive?.file;
+
+  if (!track?.fileName || !archiveFile) {
+    return null;
+  }
+
+  try {
+    const archivePath = path.resolve(process.cwd(), archiveFile);
+
+    if (!archivePath.startsWith(`${uploadRoot}${path.sep}`)) {
+      return null;
+    }
+
+    const files = unzipSync(new Uint8Array(await readFile(archivePath)));
+    const trackBytes = files[`tracks/${track.fileName}`];
+
+    if (!trackBytes) {
+      return null;
+    }
+
+    const trackDirectory = path.join(inputDirectory, "tracks");
+    const filePath = path.join(trackDirectory, sanitizeAssetName(track.fileName));
+
+    await mkdir(trackDirectory, { recursive: true });
+    await writeFile(filePath, trackBytes);
+    return {
+      file: filePath,
+      metadata: track,
     };
   } catch {
     return null;
@@ -584,6 +632,8 @@ function getInputWarnings(detail, selectedFrames) {
 
   if (!detail.videos?.length) {
     warnings.push("No guided video was stored; temporal reconstruction will use the approved frame sequence.");
+  } else if (!detail.videos.some((video) => video?.poseTrack?.fileName)) {
+    warnings.push("No dense pose track was stored; temporal reconstruction will use keyframe landmarks.");
   }
 
   if (detail.frames.some((frame) => frame.source === "mock-camera")) {

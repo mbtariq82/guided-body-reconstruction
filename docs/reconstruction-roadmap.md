@@ -15,12 +15,14 @@ Recover a metric, animatable, identity-consistent human model from one guided sm
 - Separate high-resolution face and hand passes with spoken self-capture guidance.
 - Continuous temporal video plus quality-approved keyframes.
 - Angle-balanced reference selection using estimated yaw.
-- MoveNet landmarks and local MediaPipe person masks.
+- Self-hosted BlazePose with 33 image landmarks, 33 world landmarks, temporal smoothing, and local MediaPipe person masks.
+- Synchronized pose-track archives sampled throughout video recording, with phase, yaw, dimensions, and timestamps.
 - Calibrated measurements and yaw-balanced silhouette profiles from the complete approved neutral sequence.
 - Shared SMPL-X beta fitting and smooth-normal GLB export.
 - Shared-focal perspective fitting with camera pitch/roll and per-frame translation, depth, yaw correction, and articulated body pose.
 - Confidence-weighted landmark reprojection and differentiable full-mask soft-silhouette fitting over sampled SMPL-X surface points.
 - Temporal pose, yaw, and depth consistency priors with explicit per-frame residual diagnostics.
+- Scale-normalized 3D pose-structure supervision and mixed selection of dense-track observations plus mask-bearing keyframes.
 - Optional ECON, LHM, and LHM++ worker adapters.
 - Surface, silhouette, and topology inspection in the web workbench.
 
@@ -48,8 +50,8 @@ Report per-measurement error estimates, capture coverage, fitting residuals, vie
 
 ## Engineering Milestones
 
-1. Replace sparse MoveNet observations with dense body, face, hand, and foot landmarks plus world coordinates.
-2. Decode the continuous video and add stable temporal tracking, identity checks, and observation rejection.
+1. Add robust temporal outlier rejection, occlusion reasoning, identity checks, and track uncertainty.
+2. Add dedicated face-mesh and 21-point hand tracks for close detail phases.
 3. Replace CPU surface-point splatting with differentiable triangle rasterization on a Linux/NVIDIA worker.
 4. Retain or estimate calibrated intrinsics, lens distortion, and principal point from device metadata and calibration captures.
 5. Run checkpoint-backed ECON and LHM++ on a Linux/NVIDIA worker.
@@ -83,3 +85,4 @@ Use calibrated tape or anthropometer measurements, a reference body scanner, and
 - MediaPipe Pose Landmarker: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker
 - Capture protocol evidence and ablations: ./capture-protocol-research.md
 - Temporal perspective fitting design and limits: ./temporal-perspective-fitting.md
+- Dense pose tracking format and data flow: ./dense-pose-tracking.md
