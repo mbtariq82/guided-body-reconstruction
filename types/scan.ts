@@ -401,6 +401,7 @@ export type AvatarModelAssetType =
   | "ply"
   | "gaussian-splat"
   | "smplx-params"
+  | "temporal-fit"
   | "preview-image"
   | "diagnostics";
 

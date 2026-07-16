@@ -1,6 +1,6 @@
 # Human Reconstruction Roadmap
 
-Updated: 2026-07-15
+Updated: 2026-07-16
 
 ## Accuracy Objective
 
@@ -18,6 +18,9 @@ Recover a metric, animatable, identity-consistent human model from one guided sm
 - MoveNet landmarks and local MediaPipe person masks.
 - Calibrated measurements and yaw-balanced silhouette profiles from the complete approved neutral sequence.
 - Shared SMPL-X beta fitting and smooth-normal GLB export.
+- Shared-focal perspective fitting with camera pitch/roll and per-frame translation, depth, yaw correction, and articulated body pose.
+- Confidence-weighted landmark reprojection and differentiable full-mask soft-silhouette fitting over sampled SMPL-X surface points.
+- Temporal pose, yaw, and depth consistency priors with explicit per-frame residual diagnostics.
 - Optional ECON, LHM, and LHM++ worker adapters.
 - Surface, silhouette, and topology inspection in the web workbench.
 
@@ -45,14 +48,14 @@ Report per-measurement error estimates, capture coverage, fitting residuals, vie
 
 ## Engineering Milestones
 
-1. Add a calibrated perspective camera model and solve focal length, pitch, roll, and per-frame translation.
-2. Fit one shared shape over the complete video while allowing per-frame pose and camera parameters.
-3. Replace section-width silhouette losses with differentiable full-mask rendering.
-4. Replace sparse MoveNet observations with dense body, face, hand, and foot landmarks plus world coordinates.
-5. Add temporal tracking and reject inconsistent masks or landmark identities.
-6. Run checkpoint-backed ECON and LHM++ on a Linux/NVIDIA worker.
-7. Build automatic face/body registration between the high-detail output and SMPL-X.
-8. Add scan repeatability and ground-truth benchmark tooling.
+1. Replace sparse MoveNet observations with dense body, face, hand, and foot landmarks plus world coordinates.
+2. Decode the continuous video and add stable temporal tracking, identity checks, and observation rejection.
+3. Replace CPU surface-point splatting with differentiable triangle rasterization on a Linux/NVIDIA worker.
+4. Retain or estimate calibrated intrinsics, lens distortion, and principal point from device metadata and calibration captures.
+5. Run checkpoint-backed ECON and LHM++ on a Linux/NVIDIA worker.
+6. Build automatic face/body registration between the high-detail output and SMPL-X.
+7. Add scan repeatability and ground-truth benchmark tooling.
+8. Add uncertainty-aware retake guidance driven by anatomical coverage and residual disagreement.
 9. Add consent, encryption, retention, export, and deletion controls for biometric data.
 
 ## Benchmark Protocol
@@ -79,3 +82,4 @@ Use calibrated tape or anthropometer measurements, a reference body scanner, and
 - 4DHumans: https://github.com/shubham-goel/4D-Humans
 - MediaPipe Pose Landmarker: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker
 - Capture protocol evidence and ablations: ./capture-protocol-research.md
+- Temporal perspective fitting design and limits: ./temporal-perspective-fitting.md

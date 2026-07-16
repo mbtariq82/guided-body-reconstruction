@@ -31,6 +31,8 @@ The first working milestone includes:
 - Local session validation, processing, storage, and diagnostics.
 - A bundled self-hosted SMPL-X worker.
 - Direct SMPL-X beta optimisation against calibrated measurements and yaw-balanced silhouette profiles from every approved neutral-turn frame.
+- A temporal perspective refiner that shares one identity shape while solving focal length, camera pitch/roll, per-frame depth, translation, yaw correction, and body pose.
+- Confidence-weighted robust 2D landmark reprojection plus differentiable full-mask soft-silhouette supervision over sampled SMPL-X surface points.
 - Smooth-normal GLB export with SMPL-X parameters and fitting diagnostics.
 - A reconstruction workbench with surface, silhouette, and topology inspection modes.
 - Optional ECON, LHM, and LHM++ adapter discovery for future checkpoint-backed reconstruction.
@@ -107,10 +109,19 @@ The bundled CPU path writes:
 
 - `smplx-avatar.glb`
 - `smplx-params.json`
+- `smplx-temporal-fit.json`
 - `diagnostics.json`
 - a fallback GLB only when SMPL-X cannot run
 
 Set `SMPLX_GENDER=neutral`, `male`, or `female` to select an available body model. The default is `neutral`.
+
+The temporal refiner runs by default and falls back to the measurement fit if it cannot use at least three frames. Set `SMPLX_TEMPORAL_ENABLE=0` to disable it. Research runs can tune `SMPLX_TEMPORAL_MAX_FRAMES`, `SMPLX_CAMERA_ITERATIONS`, `SMPLX_POSE_ITERATIONS`, `SMPLX_SILHOUETTE_ITERATIONS`, `SMPLX_RENDER_HEIGHT`, and `SMPLX_SURFACE_POINT_COUNT`.
+
+Run its deterministic frame-selection and mask tests with:
+
+```bash
+npm run test-avatar-worker
+```
 
 ## Research Backends
 
@@ -148,24 +159,25 @@ SELF_HOSTED_AVATAR_COMMAND="python /path/to/reconstruct.py {input} {output}" npm
 - `services/` - frame quality, segmentation, pose, camera, upload, and packaging
 - `scripts/process-scan-jobs.mjs` - validation, measurements, and reconstruction handoff
 - `scripts/self_hosted_avatar_worker.py` - SMPL-X and research-backend adapter
+- `scripts/smplx_temporal_fitter.py` - perspective camera, per-frame pose, and soft-silhouette optimisation
 - `types/` - versioned capture and reconstruction contracts
 - `.scan-uploads/` - ignored local session and output store
 - `.avatar-models/` - ignored models, repositories, and checkpoints
 
 ## Accuracy Roadmap
 
-The current SMPL-X baseline is measurement- and silhouette-constrained. It is a useful metric human prior, not yet the final likeness system.
+The current SMPL-X pipeline is measurement-, landmark-, and silhouette-constrained across representative frames from the guided sequence. It is a useful metric human prior with an explicit temporal camera model, not yet the final likeness system.
 
 The next accuracy milestones are:
 
-1. Calibrated multi-view camera optimisation using every approved video frame.
-2. Shared identity shape with per-frame pose, translation, and camera parameters.
-3. Dense differentiable silhouette loss instead of section-profile loss.
-4. More expressive pose landmarks and hand/face landmarks.
-5. Learned normal and depth priors for clothed surface refinement.
-6. LHM++ or equivalent identity reconstruction with local checkpoints.
-7. Scan-to-scan repeatability benchmarks against tape, body scanner, and motion-capture ground truth.
-8. Per-measurement uncertainty and automatic retake guidance driven by expected information gain.
+1. Replace sparse MoveNet observations with dense body, foot, hand, and face landmarks and stable temporal tracks.
+2. Decode and fit denser samples from the continuous video instead of only the quality-approved reference sequence.
+3. Replace the CPU surface-point silhouette approximation with triangle rasterization on a Linux/NVIDIA worker.
+4. Calibrate or infer camera intrinsics from device metadata instead of relying on a focal prior.
+5. Add learned normal and depth priors for clothed surface refinement.
+6. Run LHM++ or an equivalent identity reconstruction model with local checkpoints and register it to SMPL-X.
+7. Build scan-to-scan repeatability benchmarks against tape, body scanner, and motion-capture ground truth.
+8. Report per-measurement uncertainty and request retakes using expected information gain.
 
 Accuracy claims must be backed by a versioned benchmark cohort, repeat scans, calibrated ground truth, and published error distributions. Visual plausibility alone is not an accuracy metric.
 

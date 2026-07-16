@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Local SMPL-X / ECON / LHM worker adapter.
 
-This worker fits a licensed local SMPL-X model to calibrated measurements and
-guided multi-view silhouette profiles on CPU, then exports a web GLB. ECON and
-LHM remain opt-in refinement hooks for compatible research environments.
+This worker fits a licensed local SMPL-X model to calibrated measurements,
+guided silhouettes, landmarks, and per-frame perspective cameras on CPU, then
+exports a web GLB. ECON and LHM remain opt-in refinement hooks.
 """
 
 from __future__ import annotations
@@ -263,8 +263,37 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
                 betas.clamp_(-1.5, 1.5)
             final_loss = float(loss.detach())
 
+        fitted_betas = betas.detach()
+        temporal_fit_file = output_dir / "smplx-temporal-fit.json"
+        temporal_fit: dict[str, Any]
+
+        if os.environ.get("SMPLX_TEMPORAL_ENABLE", "1") == "0":
+            temporal_fit = {
+                "reason": "SMPLX_TEMPORAL_ENABLE is disabled.",
+                "status": "skipped",
+            }
+        else:
+            try:
+                from smplx_temporal_fitter import fit_temporal_smplx
+
+                fitted_betas, temporal_fit = fit_temporal_smplx(
+                    request=request,
+                    model_dir=model_dir,
+                    gender=gender,
+                    initial_betas=fitted_betas,
+                    torch=torch,
+                )
+            except Exception as error:  # noqa: BLE001 - baseline fitting must remain available.
+                temporal_fit = {
+                    "error": str(error),
+                    "reason": "Temporal perspective refinement failed; retained the measurement fit.",
+                    "status": "failed",
+                }
+
+        write_json(temporal_fit_file, temporal_fit)
+
         with torch.no_grad():
-            fitted_output = model(betas=betas, body_pose=body_pose, return_verts=True)
+            fitted_output = model(betas=fitted_betas, body_pose=body_pose, return_verts=True)
             fitted_vertices = fitted_output.vertices[0]
             fitted_height = fitted_vertices[:, 1].max() - fitted_vertices[:, 1].min()
             scale_to_cm = target_height_cm / float(fitted_height)
@@ -290,14 +319,14 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
                 key: round(float(value) * target_height_cm, 2)
                 for key, value in fitted_predictions.items()
             },
-            "betas": [round(float(value), 6) for value in betas.detach().cpu()[0]],
+            "betas": [round(float(value), 6) for value in fitted_betas.cpu()[0]],
             "bodyPose": [round(float(value), 6) for value in body_pose.detach().cpu()[0]],
             "fitIterations": iterations,
             "fitLoss": round(final_loss, 8),
             "gender": gender,
-            "method": "SMPL-X shared shape fitted to calibrated measurements and yaw-balanced guided-video silhouettes",
+            "method": "SMPL-X shared shape fitted to measurements, yaw-balanced silhouettes, temporal landmarks, and perspective cameras",
             "modelDirectory": str(model_dir),
-            "schemaVersion": "smplx-guided-multiview-fit.v2",
+            "schemaVersion": "smplx-guided-multiview-fit.v3",
             "betaPriorWeight": beta_prior_weight,
             "silhouetteObservationCount": len(silhouette_observations),
             "silhouetteFrameCount": silhouette_diagnostics["frameCount"],
@@ -306,6 +335,13 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
             "silhouetteViewCount": silhouette_diagnostics["frameCount"],
             "silhouetteYawBinCount": silhouette_diagnostics["yawBinCount"],
             "sourceMeasurementsCm": measurement_values,
+            "temporalFit": {
+                "cameraModel": temporal_fit.get("cameraModel"),
+                "finalMetrics": temporal_fit.get("finalMetrics"),
+                "frameCount": temporal_fit.get("frameCount", 0),
+                "outputFile": str(temporal_fit_file),
+                "status": temporal_fit.get("status", "unknown"),
+            },
         })
         return {
             "fitIterations": iterations,
@@ -318,11 +354,16 @@ def run_smplx(request: dict[str, Any], request_file: Path, output_dir: Path) -> 
             "silhouetteSequenceFrameCount": silhouette_diagnostics["sequenceFrameCount"],
             "silhouetteViewCount": silhouette_diagnostics["frameCount"],
             "silhouetteYawBinCount": silhouette_diagnostics["yawBinCount"],
+            "temporalFit": {
+                "finalMetrics": temporal_fit.get("finalMetrics"),
+                "frameCount": temporal_fit.get("frameCount", 0),
+                "status": temporal_fit.get("status", "unknown"),
+            },
             "mesh": {
                 "faces": int(len(model.faces)),
                 "vertices": int(fitted_vertices.shape[0]),
             },
-            "producedFiles": [str(glb_file), str(params_file)],
+            "producedFiles": [str(glb_file), str(params_file), str(temporal_fit_file)],
             "status": "succeeded",
         }
     except Exception as error:  # noqa: BLE001 - preserve actionable local diagnostics.

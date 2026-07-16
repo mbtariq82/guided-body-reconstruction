@@ -10,6 +10,7 @@
     "process-scans": "node scripts/process-scan-jobs.mjs",
     "reconstruct-avatar": "node scripts/run-avatar-reconstruction.mjs",
     "setup-avatar-worker": "python -m pip install -r scripts/avatar-worker-requirements.txt",
+    "test-avatar-worker": "PYTHONPATH=scripts python -m unittest scripts/test_smplx_temporal_fitter.py",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {

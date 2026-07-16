@@ -296,6 +296,7 @@ async function writeSelfHostedRequest({
       "avatar.glb",
       "avatar.gltf",
       "smplx-params.json",
+      "smplx-temporal-fit.json",
       "econ-mesh.obj",
       "lhm-avatar.ply",
       "preview.png",
@@ -389,11 +390,13 @@ async function writeReferenceViews(inputDirectory, frames) {
     await writeFile(filePath, dataUrlToBuffer(frame.dataUrl));
     return {
       file: filePath,
+      height: frame.height ?? null,
       phaseProgress: frame.phaseProgress ?? null,
       reconstruction: frame.reconstruction ?? null,
       sourceFile: frame.fileName,
       state: frame.state,
       vision: frame.vision ?? null,
+      width: frame.width ?? null,
       yawDeg,
     };
   }));
@@ -418,12 +421,14 @@ async function writeFrameSequence(inputDirectory, frames) {
     return {
       elapsedMs: frame.elapsedMs ?? null,
       file: filePath,
+      height: frame.height ?? null,
       metrics: frame.metrics ?? [],
       phaseProgress: frame.phaseProgress ?? null,
       reconstruction: frame.reconstruction ?? null,
       sourceFile: frame.fileName,
       state: frame.state,
       vision: frame.vision ?? null,
+      width: frame.width ?? null,
       yawDeg: getFrameYawDeg(frame),
     };
   }));
@@ -767,6 +772,10 @@ function getAvatarAssetType(filePath) {
       : "ply";
   }
 
+  if (name.includes("temporal-fit") && extension === ".json") {
+    return "temporal-fit";
+  }
+
   if (name.includes("smpl") && extension === ".json") {
     return "smplx-params";
   }
@@ -789,6 +798,10 @@ function getAssetLabel(type, fileName) {
 
   if (type === "smplx-params") {
     return "SMPL-X parameters";
+  }
+
+  if (type === "temporal-fit") {
+    return "Temporal camera and pose fit";
   }
 
   if (type === "gaussian-splat") {
